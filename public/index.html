@@ -1,98 +1,103 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>StockSpade</title>
-    <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 40px; color:#111; }
-      .card { max-width: 720px; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; }
-      label { display:block; font-weight:600; margin-bottom:8px; }
-      input { width: 100%; font-size: 16px; padding: 12px; border:1px solid #d1d5db; border-radius: 10px; }
-      button { margin-top: 12px; padding: 12px 14px; font-size: 16px; border-radius: 10px; border: 1px solid #111; background:#111; color:#fff; cursor:pointer; }
-      button:disabled { opacity:0.6; cursor:not-allowed; }
-      .muted { color:#6b7280; font-size: 13px; margin-top: 10px; }
-      pre { white-space: pre-wrap; background:#0b1020; color:#e5e7eb; padding: 14px; border-radius: 12px; margin-top: 16px; }
-      .row { display:flex; gap:10px; align-items:flex-end; }
-      .row > div { flex:1; }
-      .tiny { font-size: 12px; color:#6b7280; }
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <h1 style="margin:0 0 6px 0;">StockSpade</h1>
-      <div class="tiny">Demo: enter a ticker → get a 30-second brief.</div>
+import express from "express";
+import path from "path";
+import https from "https";
+import { fileURLToPath } from "url";
+import { URL } from "url";
 
-      <div style="height:14px;"></div>
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-      <div class="row">
-        <div>
-          <label for="ticker">Ticker</label>
-          <input id="ticker" placeholder="e.g., AAPL" autocomplete="off" />
-          <div class="muted">No login. We’ll use your browser’s localStorage for “last checked”.</div>
-        </div>
-        <div style="flex:0 0 160px;">
-          <button id="runBtn">Get brief</button>
-        </div>
-      </div>
+const app = express();
 
-      <pre id="output">Enter a ticker and click “Get brief”.</pre>
-    </div>
+// Serve static files from /public
+app.use(express.static(path.join(__dirname, "..", "public")));
 
-    <script>
-      const tickerEl = document.getElementById("ticker");
-      const runBtn = document.getElementById("runBtn");
-      const outputEl = document.getElementById("output");
+// Home page
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(__dirname, "..", "public", "index.html"));
+});
 
-      function normTicker(s) {
-        return (s || "").trim().toUpperCase();
-      }
+app.get("/about", (_req, res) => {
+  res.type("html").send("<h1>About</h1><p>Coming soon.</p>");
+});
 
-      runBtn.addEventListener("click", async () => {
-        const ticker = normTicker(tickerEl.value);
-        if (!ticker) {
-          outputEl.textContent = "Please enter a ticker (example: AAPL).";
-          return;
-        }
+app.get("/api-data", (_req, res) => {
+  res.json({ message: "ok", items: ["apple", "banana", "cherry"] });
+});
 
-        runBtn.disabled = true;
-        outputEl.textContent = "Loading...";
+app.get("/healthz", (_req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
 
-        const lastKey = `stockspade:lastChecked:${ticker}`;
-        const lastChecked = localStorage.getItem(lastKey); // may be null
+function fetchText(url) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    https
+      .get(
+        {
+          hostname: u.hostname,
+          path: u.pathname + u.search,
+          headers: { "User-Agent": "StockSpadeDemo/1.0" }
+        },
+        (res) => {
+          let data = "";
+          res.on("data", (chunk) => (data += chunk));
+          res.on("end", () => resolve(data));
+        }
+      )
+      .on("error", reject);
+  });
+}
 
-        try {
-          const resp = await fetch(`/api/brief?ticker=${encodeURIComponent(ticker)}`);
-          const data = await resp.json();
+function extractRssItems(xml, limit = 8) {
+  const items = [];
+  const blocks = xml.split("<item>").slice(1);
 
-          if (!resp.ok) {
-            outputEl.textContent = `Error: ${data.error || resp.statusText}`;
-            return;
-          }
+  for (const b of blocks) {
+    const title =
+      (b.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/) ||
+        b.match(/<title>([\s\S]*?)<\/title>/) ||
+        [])[1] || "";
+    const link = (b.match(/<link>([\s\S]*?)<\/link>/) || [])[1] || "";
+    const pubDate = (b.match(/<pubDate>([\s\S]*?)<\/pubDate>/) || [])[1] || "";
+    if (!title || !link) continue;
 
-          // Save "last checked" AFTER a successful fetch
-          const nowIso = new Date().toISOString();
-          localStorage.setItem(lastKey, nowIso);
+    const ts = pubDate ? new Date(pubDate).toISOString() : new Date().toISOString();
+    items.push({ title: title.trim(), url: link.trim(), ts, source: "Google News RSS" });
+    if (items.length >= limit) break;
+  }
+  return items;
+}
 
-          outputEl.textContent =
-            `Ticker: ${data.ticker}\n` +
-            `Generated: ${data.generatedAt}\n` +
-            `Last checked (before this): ${lastChecked || "never"}\n\n` +
-            `What's new since last check:\n` +
-            `${lastChecked ? "(Placeholder) New items since " + lastChecked : "First time checking this ticker."}\n\n` +
-            `30-second brief:\n${data.brief30s}\n\n` +
-            `Headlines:\n` +
-            (data.headlines || []).map(h => `- [${h.ts}] ${h.title}\n  ${h.url}`).join("\n");
-        } catch (err) {
-          outputEl.textContent = `Network error: ${String(err)}`;
-        } finally {
-          runBtn.disabled = false;
-        }
-      });
+app.get("/api/brief", async (req, res) => {
+  const ticker = String(req.query.ticker || "").trim().toUpperCase();
+  if (!ticker) return res.status(400).json({ error: "Missing ticker. Use ?ticker=AAPL" });
 
-      tickerEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") runBtn.click();
-      });
-    </script>
-  </body>
-</html>
+  const now = new Date().toISOString();
+
+  try {
+    const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(
+      ticker + " stock"
+    )}&hl=en-US&gl=US&ceid=US:en`;
+
+    const xml = await fetchText(rssUrl);
+    const headlines = extractRssItems(xml, 8);
+
+    res.json({
+      ticker,
+      generatedAt: now,
+      brief30s: `Headlines summary placeholder for ${ticker}. (Next: Gemini will write this.)`,
+      headlines
+    });
+  } catch (err) {
+    res.status(200).json({
+      ticker,
+      generatedAt: now,
+      brief30s: `Placeholder 30-second brief for ${ticker}. (News fetch failed.)`,
+      headlines: [],
+      note: `News fetch error: ${String(err)}`
+    });
+  }
+});
+
+export default app;
