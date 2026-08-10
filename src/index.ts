@@ -1,22 +1,22 @@
 ```ts
-import express from "express";
+import express, { type Express } from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
+const app: Express = express();
 
-// Serve anything inside /public at the site root (/, /style.css, etc.)
-app.use(express.static(path.join(__dirname, "public")));
+// Serve static files from /public
+app.use(express.static(path.join(__dirname, "..", "public")));
 
-// Homepage -> StockSpade UI
+// Homepage -> serve public/index.html
 app.get("/", (_req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+  res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
-app.get("/about", function (_req, res) {
+app.get("/about", (_req, res) => {
   res.sendFile(path.join(__dirname, "..", "components", "about.htm"));
 });
 
@@ -35,4 +35,3 @@ app.get("/healthz", (_req, res) => {
 
 export default app;
 ```
-
