@@ -21,7 +21,7 @@
   <body>
     <div class="card">
       <h1 style="margin:0 0 6px 0;">StockSpade</h1>
-      <div class="tiny">Demo: enter a ticker → get a 30-second brief (coming next).</div>
+      <div class="tiny">Demo: enter a ticker → get a 30-second brief.</div>
 
       <div style="height:14px;"></div>
 
@@ -55,20 +55,39 @@
           return;
         }
 
-        // For now: placeholder output (next step we’ll call your API route)
-        outputEl.textContent =
-          `Ticker: ${ticker}\n` +
-          `Status: UI working\n\n` +
-          `Next: wire this button to an API endpoint that returns:\n` +
-          `- 30-second brief\n` +
-          `- headlines with timestamps + source links\n` +
-          `- what's new since last check (using localStorage)\n`;
+        runBtn.disabled = true;
+        outputEl.textContent = "Loading...";
 
-        // store "last checked" now (we’ll use this in the next step)
-        localStorage.setItem(`stockspade:lastChecked:${ticker}`, new Date().toISOString());
+        const lastKey = `stockspade:lastChecked:${ticker}`;
+        const lastChecked = localStorage.getItem(lastKey); // may be null
+
+        try {
+          const resp = await fetch(`/api/brief?ticker=${encodeURIComponent(ticker)}`);
+          const data = await resp.json();
+
+          if (!resp.ok) {
+            outputEl.textContent = `Error: ${data.error || resp.statusText}`;
+            return;
+          }
+
+          // Save "last checked" AFTER a successful fetch
+          const nowIso = new Date().toISOString();
+          localStorage.setItem(lastKey, nowIso);
+
+          outputEl.textContent =
+            `Ticker: ${data.ticker}\n` +
+            `Generated: ${data.generatedAt}\n` +
+            `Last checked (before this): ${lastChecked || "never"}\n\n` +
+            `30-second brief:\n${data.brief30s}\n\n` +
+            `Headlines:\n` +
+            (data.headlines || []).map(h => `- [${h.ts}] ${h.title}\n  ${h.url}`).join("\n");
+        } catch (err) {
+          outputEl.textContent = `Network error: ${String(err)}`;
+        } finally {
+          runBtn.disabled = false;
+        }
       });
 
-      // nice-to-have: press Enter in the input
       tickerEl.addEventListener("keydown", (e) => {
         if (e.key === "Enter") runBtn.click();
       });
