@@ -78,6 +78,8 @@
             `Ticker: ${data.ticker}\n` +
             `Generated: ${data.generatedAt}\n` +
             `Last checked (before this): ${lastChecked || "never"}\n\n` +
+            `What's new since last check:\n` +
+            `${lastChecked ? "(Placeholder) New items since " + lastChecked : "First time checking this ticker."}\n\n` +
             `30-second brief:\n${data.brief30s}\n\n` +
             `Headlines:\n` +
             (data.headlines || []).map(h => `- [${h.ts}] ${h.title}\n  ${h.url}`).join("\n");
