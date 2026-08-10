@@ -1,4 +1,3 @@
-```js
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -31,4 +30,3 @@ app.get("/healthz", (_req, res) => {
 });
 
 export default app;
-```
