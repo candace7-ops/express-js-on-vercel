@@ -1,12 +1,77 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>StockSpade</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 40px; color:#111; }
+      .card { max-width: 720px; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; }
+      label { display:block; font-weight:600; margin-bottom:8px; }
+      input { width: 100%; font-size: 16px; padding: 12px; border:1px solid #d1d5db; border-radius: 10px; }
+      button { margin-top: 12px; padding: 12px 14px; font-size: 16px; border-radius: 10px; border: 1px solid #111; background:#111; color:#fff; cursor:pointer; }
+      button:disabled { opacity:0.6; cursor:not-allowed; }
+      .muted { color:#6b7280; font-size: 13px; margin-top: 10px; }
+      pre { white-space: pre-wrap; background:#0b1020; color:#e5e7eb; padding: 14px; border-radius: 12px; margin-top: 16px; }
+      .row { display:flex; gap:10px; align-items:flex-end; }
+      .row > div { flex:1; }
+      .tiny { font-size: 12px; color:#6b7280; }
+    </style>
   </head>
-  <body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 40px;">
-    <h1>StockSpade</h1>
-    <p>If you can see this, deployment works.</p>
+  <body>
+    <div class="card">
+      <h1 style="margin:0 0 6px 0;">StockSpade</h1>
+      <div class="tiny">Demo: enter a ticker → get a 30-second brief (coming next).</div>
+
+      <div style="height:14px;"></div>
+
+      <div class="row">
+        <div>
+          <label for="ticker">Ticker</label>
+          <input id="ticker" placeholder="e.g., AAPL" autocomplete="off" />
+          <div class="muted">No login. We’ll use your browser’s localStorage for “last checked”.</div>
+        </div>
+        <div style="flex:0 0 160px;">
+          <button id="runBtn">Get brief</button>
+        </div>
+      </div>
+
+      <pre id="output">Enter a ticker and click “Get brief”.</pre>
+    </div>
+
+    <script>
+      const tickerEl = document.getElementById("ticker");
+      const runBtn = document.getElementById("runBtn");
+      const outputEl = document.getElementById("output");
+
+      function normTicker(s) {
+        return (s || "").trim().toUpperCase();
+      }
+
+      runBtn.addEventListener("click", async () => {
+        const ticker = normTicker(tickerEl.value);
+        if (!ticker) {
+          outputEl.textContent = "Please enter a ticker (example: AAPL).";
+          return;
+        }
+
+        // For now: placeholder output (next step we’ll call your API route)
+        outputEl.textContent =
+          `Ticker: ${ticker}\n` +
+          `Status: UI working\n\n` +
+          `Next: wire this button to an API endpoint that returns:\n` +
+          `- 30-second brief\n` +
+          `- headlines with timestamps + source links\n` +
+          `- what's new since last check (using localStorage)\n`;
+
+        // store "last checked" now (we’ll use this in the next step)
+        localStorage.setItem(`stockspade:lastChecked:${ticker}`, new Date().toISOString());
+      });
+
+      // nice-to-have: press Enter in the input
+      tickerEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") runBtn.click();
+      });
+    </script>
   </body>
 </html>
