@@ -1,111 +1,106 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>StockSpade</title>
-    <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 40px; color:#111; }
-      .card { max-width: 720px; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; }
-      label { display:block; font-weight:600; margin-bottom:8px; }
-      input { width: 100%; font-size: 16px; padding: 12px; border:1px solid #d1d5db; border-radius: 10px; }
-      button { margin-top: 12px; padding: 12px 14px; font-size: 16px; border-radius: 10px; border: 1px solid #111; background:#111; color:#fff; cursor:pointer; }
-      button:disabled { opacity:0.6; cursor:not-allowed; }
-      .muted { color:#6b7280; font-size: 13px; margin-top: 10px; }
-      pre { white-space: pre-wrap; background:#0b1020; color:#e5e7eb; padding: 14px; border-radius: 12px; margin-top: 16px; }
-      .row { display:flex; gap:10px; align-items:flex-end; }
-      .row > div { flex:1; }
-      .tiny { font-size: 12px; color:#6b7280; }
-      a { color:#111; }
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <h1 style="margin:0 0 6px 0;">StockSpade</h1>
-      <div class="tiny">Demo: enter a ticker → get a 30-second brief.</div>
+<script>
+  const tickerEl = document.getElementById("ticker");
+  const runBtn = document.getElementById("runBtn");
+  const outputEl = document.getElementById("output");
+  const redditLinkEl = document.getElementById("redditLink");
 
-      <div style="height:14px;"></div>
+  function normTicker(s) {
+    return (s || "").trim().toUpperCase();
+  }
 
-      <div class="row">
-        <div>
-          <label for="ticker">Ticker</label>
-          <input id="ticker" placeholder="e.g., AAPL" autocomplete="off" />
-          <div class="muted">No login. We’ll use your browser localStorage for “last checked”.</div>
-        </div>
-        <div style="flex:0 0 160px;">
-          <button id="runBtn">Get brief</button>
-          <div class="muted" style="margin-top:10px;">
-            Reddit pulse:
-            <a id="redditLink" href="https://www.reddit.com/search/?q=AAPL&sort=new" target="_blank" rel="noreferrer">open Reddit search</a>
-          </div>
-        </div>
-      </div>
+  function setRedditLink(ticker) {
+    const q = `$${ticker} OR ${ticker}`;
+    redditLinkEl.href = `https://www.reddit.com/search/?q=${encodeURIComponent(q)}&sort=new`;
+  }
 
-      <pre id="output">Enter a ticker and click “Get brief”.</pre>
-    </div>
+  // NEW: timestamp parsing helper
+  function parseTsToMs(ts) {
+    if (!ts) return null;
+    if (typeof ts === "number") return ts;
+    const n = Number(ts);
+    if (!Number.isNaN(n)) return n; // handles ms stored as string
+    const d = new Date(ts);
+    const ms = d.getTime();
+    return Number.isNaN(ms) ? null : ms;
+  }
 
-    <script>
-      const tickerEl = document.getElementById("ticker");
-      const runBtn = document.getElementById("runBtn");
-      const outputEl = document.getElementById("output");
-      const redditLinkEl = document.getElementById("redditLink");
+  runBtn.addEventListener("click", async () => {
+    const ticker = normTicker(tickerEl.value);
+    if (!ticker) {
+      outputEl.textContent = "Please enter a ticker (example: AAPL).";
+      return;
+    }
 
-      function normTicker(s) {
-        return (s || "").trim().toUpperCase();
+    setRedditLink(ticker);
+
+    runBtn.disabled = true;
+    outputEl.textContent = "Loading...";
+
+    const lastKey = `stockspade:lastChecked:${ticker}`;
+
+    // CHANGED: store as milliseconds (number) for easy comparison
+    const lastCheckedRaw = localStorage.getItem(lastKey);
+    const lastCheckedMs = lastCheckedRaw ? Number(lastCheckedRaw) : null;
+    const lastCheckedLabel =
+      lastCheckedMs && !Number.isNaN(lastCheckedMs)
+        ? new Date(lastCheckedMs).toISOString()
+        : (lastCheckedRaw || "never");
+
+    try {
+      const resp = await fetch(`/api/brief?ticker=${encodeURIComponent(ticker)}`);
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        outputEl.textContent = `Error: ${data.error || resp.statusText}`;
+        return;
       }
 
-      function setRedditLink(ticker) {
-        const q = `$${ticker} OR ${ticker}`;
-        redditLinkEl.href = `https://www.reddit.com/search/?q=${encodeURIComponent(q)}&sort=new`;
+      const headlines = Array.isArray(data.headlines) ? data.headlines : [];
+
+      // NEW: filter headlines newer than lastChecked
+      const newHeadlines = headlines.filter(h => {
+        const hMs = parseTsToMs(h.ts);
+        if (!hMs) return false;                 // if timestamp missing/unparseable, don't count as new
+        if (!lastCheckedMs || Number.isNaN(lastCheckedMs)) return true; // first run => all are new
+        return hMs > lastCheckedMs;
+      });
+
+      // CHANGED: update lastChecked AFTER successful fetch/render, store ms
+      const nowMs = Date.now();
+      localStorage.setItem(lastKey, String(nowMs));
+
+      // NEW: human-readable “what’s new”
+      let whatsNewText = "";
+      if (!lastCheckedMs || Number.isNaN(lastCheckedMs)) {
+        whatsNewText = "First time checking this ticker (everything is “new”).";
+      } else if (newHeadlines.length === 0) {
+        whatsNewText = `Nothing new since ${new Date(lastCheckedMs).toLocaleString()}.`;
+      } else {
+        whatsNewText =
+          `${newHeadlines.length} new headline(s) since ${new Date(lastCheckedMs).toLocaleString()}:\n` +
+          newHeadlines
+            .map(h => `- [${h.ts}] ${h.title}\n  ${h.url}`)
+            .join("\n");
       }
 
-      runBtn.addEventListener("click", async () => {
-        const ticker = normTicker(tickerEl.value);
-        if (!ticker) {
-          outputEl.textContent = "Please enter a ticker (example: AAPL).";
-          return;
-        }
+      outputEl.textContent =
+        `Ticker: ${data.ticker}\n` +
+        `Generated: ${data.generatedAt}\n` +
+        `Last checked (before this): ${lastCheckedLabel}\n\n` +
+        `What's new since last check:\n` +
+        `${whatsNewText}\n\n` +
+        `30-second brief:\n${data.brief30s}\n\n` +
+        `Headlines:\n` +
+        headlines.map(h => `- [${h.ts}] ${h.title}\n  ${h.url}`).join("\n") +
+        `\n\n---\nReddit pulse\nOpen: ${redditLinkEl.href}\n`;
+    } catch (err) {
+      outputEl.textContent = `Network error: ${String(err)}`;
+    } finally {
+      runBtn.disabled = false;
+    }
+  });
 
-        setRedditLink(ticker);
-
-        runBtn.disabled = true;
-        outputEl.textContent = "Loading...";
-
-        const lastKey = `stockspade:lastChecked:${ticker}`;
-        const lastChecked = localStorage.getItem(lastKey);
-
-        try {
-          const resp = await fetch(`/api/brief?ticker=${encodeURIComponent(ticker)}`);
-          const data = await resp.json();
-
-          if (!resp.ok) {
-            outputEl.textContent = `Error: ${data.error || resp.statusText}`;
-            return;
-          }
-
-          const nowIso = new Date().toISOString();
-          localStorage.setItem(lastKey, nowIso);
-
-          outputEl.textContent =
-            `Ticker: ${data.ticker}\n` +
-            `Generated: ${data.generatedAt}\n` +
-            `Last checked (before this): ${lastChecked || "never"}\n\n` +
-            `What's new since last check:\n` +
-            `${lastChecked ? "(Placeholder) New items since " + lastChecked : "First time checking this ticker."}\n\n` +
-            `30-second brief:\n${data.brief30s}\n\n` +
-            `Headlines:\n` +
-            (data.headlines || []).map(h => `- [${h.ts}] ${h.title}\n  ${h.url}`).join("\n") +
-            `\n\n---\nReddit pulse\nOpen: ${redditLinkEl.href}\n`;
-        } catch (err) {
-          outputEl.textContent = `Network error: ${String(err)}`;
-        } finally {
-          runBtn.disabled = false;
-        }
-      });
-
-      tickerEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") runBtn.click();
-      });
-    </script>
-  </body>
-</html>
+  tickerEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") runBtn.click();
+  });
+</script>
