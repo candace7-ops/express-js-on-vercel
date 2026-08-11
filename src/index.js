@@ -21,7 +21,7 @@ function simpleSentimentLabel(text) {
 
 async function fetchRedditPosts(ticker) {
   const q = encodeURIComponent(`$${ticker} OR ${ticker}`);
-  const url = `https://www.reddit.com/search.json?q=${q}&sort=new&limit=8`;
+  const url = `https://old.reddit.com/search.json?q=${q}&sort=new&limit=8`;;
 
   const resp = await fetch(url, {
     headers: { "User-Agent": "StockSpadeDemo/1.0 (hackathon demo)" }
