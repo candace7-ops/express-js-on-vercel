@@ -1,106 +1,217 @@
-<script>
-  const tickerEl = document.getElementById("ticker");
-  const runBtn = document.getElementById("runBtn");
-  const outputEl = document.getElementById("output");
-  const redditLinkEl = document.getElementById("redditLink");
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StockSpade</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 28px; color:#111; background:#fafafa; }
+      .card { max-width: 820px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background:#fff; }
+      .brand { display:flex; align-items:center; gap:10px; }
+      .spade { width:28px; height:28px; display:inline-block; }
+      h1 { margin:0; font-size: 26px; }
+      .tiny { font-size: 12px; color:#6b7280; margin-top: 4px; }
+      label { display:block; font-weight:600; margin-bottom:8px; }
+      input { width: 100%; font-size: 16px; padding: 12px; border:1px solid #d1d5db; border-radius: 10px; }
+      button { padding: 12px 14px; font-size: 16px; border-radius: 10px; border: 1px solid #111; background:#111; color:#fff; cursor:pointer; }
+      button:disabled { opacity:0.6; cursor:not-allowed; }
+      .muted { color:#6b7280; font-size: 13px; margin-top: 8px; }
+      .row { display:flex; gap:12px; align-items:flex-end; flex-wrap: wrap; }
+      .row > div { flex: 1 1 260px; }
+      a { color:#111; }
+      .pill { display:inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; border:1px solid #e5e7eb; }
+      .bull { background:#ecfdf5; border-color:#a7f3d0; color:#065f46; }
+      .bear { background:#fef2f2; border-color:#fecaca; color:#991b1b; }
+      .neutral { background:#f3f4f6; border-color:#e5e7eb; color:#374151; }
+      .box { border:1px solid #e5e7eb; border-radius: 12px; padding: 12px; margin-top: 12px; background:#fcfcfd; }
+      ul { margin: 8px 0 0 18px; }
+      li { margin: 6px 0; }
+      .err { color:#991b1b; font-size: 13px; margin-top: 10px; white-space: pre-wrap; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="brand">
+        <svg class="spade" viewBox="0 0 64 64" aria-hidden="true">
+          <path d="M32 6C22 16 10 26 10 37c0 9 7 16 16 16 4 0 8-2 10-5-2 6-6 10-12 10v6h16v-6c-6 0-10-4-12-10 2 3 6 5 10 5 9 0 16-7 16-16C54 26 42 16 32 6z" fill="#111"/>
+        </svg>
+        <div>
+          <h1>StockSpade</h1>
+          <div class="tiny">Enter a ticker → get a 30-second brief + fresh headlines.</div>
+        </div>
+      </div>
 
-  function normTicker(s) {
-    return (s || "").trim().toUpperCase();
-  }
+      <div style="height:14px;"></div>
 
-  function setRedditLink(ticker) {
-    const q = `$${ticker} OR ${ticker}`;
-    redditLinkEl.href = `https://www.reddit.com/search/?q=${encodeURIComponent(q)}&sort=new`;
-  }
+      <div class="row">
+        <div>
+          <label for="ticker">Ticker</label>
+          <input id="ticker" placeholder="e.g., AAPL" autocomplete="off" />
+          <div class="muted">No login. “Last checked” is stored in your browser.</div>
+        </div>
+        <div style="flex:0 0 180px;">
+          <button id="runBtn">Get brief</button>
+          <div class="muted" style="margin-top:10px;">
+            Reddit pulse:
+            <a id="redditLink" href="https://www.reddit.com/search/?q=AAPL&sort=new" target="_blank" rel="noreferrer">open Reddit search</a>
+          </div>
+        </div>
+      </div>
 
-  // NEW: timestamp parsing helper
-  function parseTsToMs(ts) {
-    if (!ts) return null;
-    if (typeof ts === "number") return ts;
-    const n = Number(ts);
-    if (!Number.isNaN(n)) return n; // handles ms stored as string
-    const d = new Date(ts);
-    const ms = d.getTime();
-    return Number.isNaN(ms) ? null : ms;
-  }
+      <div id="error" class="err" style="display:none;"></div>
 
-  runBtn.addEventListener("click", async () => {
-    const ticker = normTicker(tickerEl.value);
-    if (!ticker) {
-      outputEl.textContent = "Please enter a ticker (example: AAPL).";
-      return;
-    }
+      <div class="box">
+        <div><strong>Status</strong></div>
+        <div id="status" class="muted">Ready.</div>
+      </div>
 
-    setRedditLink(ticker);
+      <div class="box">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <strong>Brief</strong>
+          <span id="tonePill" class="pill neutral">Tone: —</span>
+          <span id="aiPill" class="pill neutral">Gemini: —</span>
+        </div>
+        <div id="brief" class="mono" style="margin-top:10px; white-space:pre-wrap;">Enter a ticker and click “Get brief”.</div>
+      </div>
 
-    runBtn.disabled = true;
-    outputEl.textContent = "Loading...";
+      <div class="box">
+        <div><strong>What’s new since last check</strong></div>
+        <div id="whatsNew" class="muted" style="margin-top:8px;">—</div>
+      </div>
 
-    const lastKey = `stockspade:lastChecked:${ticker}`;
+      <div class="box">
+        <div><strong>Headlines</strong></div>
+        <ul id="headlines"></ul>
+      </div>
+    </div>
 
-    // CHANGED: store as milliseconds (number) for easy comparison
-    const lastCheckedRaw = localStorage.getItem(lastKey);
-    const lastCheckedMs = lastCheckedRaw ? Number(lastCheckedRaw) : null;
-    const lastCheckedLabel =
-      lastCheckedMs && !Number.isNaN(lastCheckedMs)
-        ? new Date(lastCheckedMs).toISOString()
-        : (lastCheckedRaw || "never");
-
-    try {
-      const resp = await fetch(`/api/brief?ticker=${encodeURIComponent(ticker)}`);
-      const data = await resp.json();
-
-      if (!resp.ok) {
-        outputEl.textContent = `Error: ${data.error || resp.statusText}`;
-        return;
-      }
-
-      const headlines = Array.isArray(data.headlines) ? data.headlines : [];
-
-      // NEW: filter headlines newer than lastChecked
-      const newHeadlines = headlines.filter(h => {
-        const hMs = parseTsToMs(h.ts);
-        if (!hMs) return false;                 // if timestamp missing/unparseable, don't count as new
-        if (!lastCheckedMs || Number.isNaN(lastCheckedMs)) return true; // first run => all are new
-        return hMs > lastCheckedMs;
+    <script>
+      // Hard guard: if anything errors, show it instead of blank screen
+      window.addEventListener("error", (e) => {
+        const el = document.getElementById("error");
+        el.style.display = "block";
+        el.textContent = "Page error: " + (e?.message || String(e));
       });
 
-      // CHANGED: update lastChecked AFTER successful fetch/render, store ms
-      const nowMs = Date.now();
-      localStorage.setItem(lastKey, String(nowMs));
+      const tickerEl = document.getElementById("ticker");
+      const runBtn = document.getElementById("runBtn");
+      const statusEl = document.getElementById("status");
+      const briefEl = document.getElementById("brief");
+      const whatsNewEl = document.getElementById("whatsNew");
+      const headlinesEl = document.getElementById("headlines");
+      const redditLinkEl = document.getElementById("redditLink");
+      const tonePillEl = document.getElementById("tonePill");
+      const aiPillEl = document.getElementById("aiPill");
 
-      // NEW: human-readable “what’s new”
-      let whatsNewText = "";
-      if (!lastCheckedMs || Number.isNaN(lastCheckedMs)) {
-        whatsNewText = "First time checking this ticker (everything is “new”).";
-      } else if (newHeadlines.length === 0) {
-        whatsNewText = `Nothing new since ${new Date(lastCheckedMs).toLocaleString()}.`;
-      } else {
-        whatsNewText =
-          `${newHeadlines.length} new headline(s) since ${new Date(lastCheckedMs).toLocaleString()}:\n` +
-          newHeadlines
-            .map(h => `- [${h.ts}] ${h.title}\n  ${h.url}`)
-            .join("\n");
+      function normTicker(s) {
+        return (s || "").trim().toUpperCase();
       }
 
-      outputEl.textContent =
-        `Ticker: ${data.ticker}\n` +
-        `Generated: ${data.generatedAt}\n` +
-        `Last checked (before this): ${lastCheckedLabel}\n\n` +
-        `What's new since last check:\n` +
-        `${whatsNewText}\n\n` +
-        `30-second brief:\n${data.brief30s}\n\n` +
-        `Headlines:\n` +
-        headlines.map(h => `- [${h.ts}] ${h.title}\n  ${h.url}`).join("\n") +
-        `\n\n---\nReddit pulse\nOpen: ${redditLinkEl.href}\n`;
-    } catch (err) {
-      outputEl.textContent = `Network error: ${String(err)}`;
-    } finally {
-      runBtn.disabled = false;
-    }
-  });
+      function setRedditLink(ticker) {
+        const q = `$${ticker} OR ${ticker}`;
+        redditLinkEl.href = `https://www.reddit.com/search/?q=${encodeURIComponent(q)}&sort=new`;
+      }
 
-  tickerEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") runBtn.click();
-  });
-</script>
+      function parseTsToMs(ts) {
+        if (!ts) return null;
+        if (typeof ts === "number") return ts;
+        const n = Number(ts);
+        if (!Number.isNaN(n)) return n;
+        const d = new Date(ts);
+        const ms = d.getTime();
+        return Number.isNaN(ms) ? null : ms;
+      }
+
+      function setPill(el, kind, text) {
+        el.className = "pill " + (kind || "neutral");
+        el.textContent = text;
+      }
+
+      runBtn.addEventListener("click", async () => {
+        const ticker = normTicker(tickerEl.value);
+        if (!ticker) {
+          statusEl.textContent = "Please enter a ticker (example: AAPL).";
+          return;
+        }
+
+        setRedditLink(ticker);
+
+        runBtn.disabled = true;
+        statusEl.textContent = "Loading…";
+
+        const lastKey = `stockspade:lastChecked:${ticker}`;
+        const lastCheckedRaw = localStorage.getItem(lastKey);
+        const lastCheckedMs = lastCheckedRaw ? Number(lastCheckedRaw) : null;
+
+        try {
+          const resp = await fetch(`/api/brief?ticker=${encodeURIComponent(ticker)}`);
+          const data = await resp.json();
+
+          if (!resp.ok) {
+            statusEl.textContent = "Error loading brief.";
+            briefEl.textContent = `Error: ${data.error || resp.statusText}`;
+            return;
+          }
+
+          // Tone pill
+          const tone = data?.sentiment?.label || "Neutral";
+          if (tone === "Bullish") setPill(tonePillEl, "bull", "Tone: Bullish");
+          else if (tone === "Bearish") setPill(tonePillEl, "bear", "Tone: Bearish");
+          else setPill(tonePillEl, "neutral", "Tone: Neutral");
+
+          // Gemini pill
+          const used = !!data?.ai?.used;
+          setPill(aiPillEl, used ? "bull" : "neutral", "Gemini: " + (used ? "ON" : "OFF"));
+
+          // Brief text
+          briefEl.textContent = data.brief30s || "(no brief)";
+
+          // Headlines list (clickable)
+          const headlines = Array.isArray(data.headlines) ? data.headlines : [];
+          headlinesEl.innerHTML = headlines.map(h => {
+            const when = h.ts ? new Date(h.ts).toLocaleString() : "";
+            const source = h.source ? ` — ${h.source}` : "";
+            const title = h.title || "(untitled)";
+            const url = h.url || "#";
+            return `<li><a href="${url}" target="_blank" rel="noopener noreferrer">${title}</a> <span class="tiny">(${when}${source})</span></li>`;
+          }).join("");
+
+          // What's new since last check
+          const newHeadlines = headlines.filter(h => {
+            const hMs = parseTsToMs(h.ts);
+            if (!hMs) return false;
+            if (!lastCheckedMs || Number.isNaN(lastCheckedMs)) return true;
+            return hMs > lastCheckedMs;
+          });
+
+          if (!lastCheckedMs || Number.isNaN(lastCheckedMs)) {
+            whatsNewEl.textContent = "First time checking this ticker (everything is new).";
+          } else if (newHeadlines.length === 0) {
+            whatsNewEl.textContent = `Nothing new since ${new Date(lastCheckedMs).toLocaleString()}.`;
+          } else {
+            whatsNewEl.innerHTML =
+              `<div class="muted">${newHeadlines.length} new item(s):</div>` +
+              `<ul>` +
+              newHeadlines.map(h => `<li>${h.title}</li>`).join("") +
+              `</ul>`;
+          }
+
+          // Update last checked (ms)
+          localStorage.setItem(lastKey, String(Date.now()));
+
+          statusEl.textContent = `Loaded ${ticker}.`;
+        } catch (err) {
+          statusEl.textContent = "Network error.";
+          briefEl.textContent = String(err);
+        } finally {
+          runBtn.disabled = false;
+        }
+      });
+
+      tickerEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") runBtn.click();
+      });
+    </script>
+  </body>
+</html>
