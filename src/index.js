@@ -18,31 +18,49 @@ function simpleSentimentLabel(text) {
   if (score <= -1) return "Negative";
   return "Neutral";
 }
-
 async function fetchRedditPosts(ticker) {
   const q = encodeURIComponent(`$${ticker} OR ${ticker}`);
-  const url = `https://old.reddit.com/search.json?q=${q}&sort=new&limit=8`;;
+  const url = `https://www.reddit.com/search.rss?q=${q}&sort=new`;
 
   const resp = await fetch(url, {
     headers: { "User-Agent": "StockSpadeDemo/1.0 (hackathon demo)" }
   });
+  if (!resp.ok) throw new Error(`Reddit RSS HTTP ${resp.status}`);
 
-  if (!resp.ok) throw new Error(`Reddit HTTP ${resp.status}`);
+  const xml = await resp.text();
 
-  const json = await resp.json();
-  const children = json?.data?.children || [];
+  // super-light RSS parsing (no dependencies)
+  const items = xml.split("<entry>").slice(1, 9); // up to 8 entries
+  const posts = [];
 
-  return children
-    .map((c) => {
-      const p = c?.data || {};
-      return {
-        title: p.title,
-        subreddit: p.subreddit_name_prefixed || `r/${p.subreddit}`,
-        url: p.permalink ? `https://www.reddit.com${p.permalink}` : p.url,
-        ts: p.created_utc ? new Date(p.created_utc * 1000).toISOString() : null,
-        score: p.score,
-        comments: p.num_comments
-      };
+  for (const item of items) {
+    const title = (item.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || "";
+    const link = (item.match(/<link[^>]*href="([^"]+)"/) || [])[1] || "";
+    const updated = (item.match(/<updated>([\s\S]*?)<\/updated>/) || [])[1] || "";
+    const subreddit = (item.match(/<category[^>]*term="([^"]+)"/) || [])[1] || "reddit";
+
+    const cleanTitle = title
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .trim();
+
+    if (cleanTitle && link) {
+      posts.push({
+        title: cleanTitle,
+        subreddit,
+        url: link,
+        ts: updated || null,
+        score: null,
+        comments: null
+      });
+    }
+  }
+
+  return posts;
+}
     })
     .filter((p) => p.title && p.url);
 }
