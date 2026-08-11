@@ -1,12 +1,27 @@
 import express from "express";
+import path from "path";
 import https from "https";
 import { URL } from "url";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const app = express();
 
-// health check (now under /api so Vercel routes it correctly)
+// Serve static UI from /public
+const PUBLIC_DIR = path.join(process.cwd(), "public");
+app.use(express.static(PUBLIC_DIR));
+
+// Homepage route
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "index.html"));
+});
+
+// Health check (keep the /api one you already use)
 app.get("/api/healthz", (_req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Optional: also support /healthz so you don’t get confused
+app.get("/healthz", (_req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
@@ -126,8 +141,6 @@ ${JSON.stringify(top, null, 2)}
     return { ok: false, brief: null, note: `Gemini error: ${String(e)}` };
   }
 }
-
-// --- main API ---
 
 app.get("/api/brief", async (req, res) => {
   const ticker = String(req.query.ticker || "").trim().toUpperCase();
