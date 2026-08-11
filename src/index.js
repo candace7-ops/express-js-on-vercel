@@ -3,6 +3,7 @@ import path from "path";
 import https from "https";
 import { fileURLToPath } from "url";
 import { URL } from "url";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -96,6 +97,48 @@ function extractRssItems(xml, limit = 8) {
   return items;
 }
 
+// NEW: Gemini (never-crash) helper
+async function geminiBriefFromHeadlines({ ticker, headlines, sentimentLabel }) {
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  // No key? Don't fail. Just tell caller to fallback.
+  if (!apiKey) return { ok: false, brief: null, note: "GEMINI_API_KEY not set" };
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+    const top = (headlines || []).slice(0, 8).map((h) => ({
+      title: h.title,
+      source: h.source,
+      ts: h.ts,
+      url: h.url
+    }));
+
+    const prompt =
+`You are StockSpade, an investor news assistant.
+Write a 30-second brief for ticker ${ticker} using ONLY the headlines provided.
+Rules:
+- 6-10 short bullet lines max
+- mention overall tone: ${sentimentLabel}
+- do NOT invent facts, numbers, prices, or earnings
+- do NOT mention "as an AI"
+- end with one line: "Not financial advice."
+
+HEADLINES (JSON):
+${JSON.stringify(top, null, 2)}
+`;
+
+    const result = await model.generateContent(prompt);
+    const brief = result?.response?.text?.() || "";
+
+    if (!brief.trim()) return { ok: false, brief: null, note: "Empty Gemini response" };
+    return { ok: true, brief: brief.trim(), note: "Gemini generated" };
+  } catch (e) {
+    return { ok: false, brief: null, note: `Gemini error: ${String(e)}` };
+  }
+}
+
 // --- main API ---
 
 app.get("/api/brief", async (req, res) => {
@@ -117,20 +160,34 @@ app.get("/api/brief", async (req, res) => {
     const headlineText = (headlines || []).map((h) => h.title).join(" • ");
     const sentiment = simpleSentimentLabel(headlineText);
 
-    // "brief" built from headlines + sentiment (no Gemini, no crashes)
+    // fallback brief (always works)
     const topTitles = (headlines || []).slice(0, 4).map((h) => h.title);
-    const brief30s =
+    const fallbackBrief30s =
       `30-second brief for ${ticker}:\n` +
       `- Tone: ${sentiment.label} (headline-based)\n` +
       (topTitles.length
         ? topTitles.map((t) => `- ${t}`).join("\n")
         : `- No major headlines found.`);
 
+    // Gemini attempt (never crashes)
+    const gem = await geminiBriefFromHeadlines({
+      ticker,
+      headlines,
+      sentimentLabel: sentiment.label
+    });
+
+    const brief30s = gem.ok ? gem.brief : fallbackBrief30s;
+
     res.json({
       ticker,
       generatedAt: now,
       brief30s,
-      sentiment,                 // { label, score }
+      sentiment, // { label, score }
+      ai: {
+        provider: "gemini",
+        used: gem.ok,
+        note: gem.note
+      },
       reddit: {
         status: "link-only",
         searchUrl: redditSearchUrl(ticker),
@@ -139,11 +196,17 @@ app.get("/api/brief", async (req, res) => {
       headlines
     });
   } catch (err) {
+    // keep 200 so UI can still show a result (demo reliability)
     res.status(200).json({
       ticker,
       generatedAt: now,
       brief30s: `Placeholder 30-second brief for ${ticker}. (News fetch failed.)`,
       sentiment: { label: "Neutral", score: 0 },
+      ai: {
+        provider: "gemini",
+        used: false,
+        note: "News fetch failed before Gemini step"
+      },
       reddit: {
         status: "link-only",
         searchUrl: redditSearchUrl(ticker),
