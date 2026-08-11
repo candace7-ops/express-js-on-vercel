@@ -1,26 +1,25 @@
 import express from "express";
 import path from "path";
 import https from "https";
+import { fileURLToPath } from "url";
 import { URL } from "url";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 
-// Serve static UI from /public
-const PUBLIC_DIR = path.join(process.cwd(), "public");
+// Serve static files from /public (reliable path)
+const PUBLIC_DIR = path.join(__dirname, "..", "public");
 app.use(express.static(PUBLIC_DIR));
 
-// Homepage route
+// Always serve homepage
 app.get("/", (_req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, "index.html"));
 });
 
-// Health check (keep the /api one you already use)
-app.get("/api/healthz", (_req, res) => {
-  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
-});
-
-// Optional: also support /healthz so you don’t get confused
+// Health check
 app.get("/healthz", (_req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
@@ -142,6 +141,8 @@ ${JSON.stringify(top, null, 2)}
   }
 }
 
+// --- main API ---
+
 app.get("/api/brief", async (req, res) => {
   const ticker = String(req.query.ticker || "").trim().toUpperCase();
   if (!ticker) return res.status(400).json({ error: "Missing ticker. Use ?ticker=AAPL" });
@@ -159,6 +160,7 @@ app.get("/api/brief", async (req, res) => {
     const headlineText = headlines.map((h) => h.title).join(" • ");
     const sentiment = simpleSentimentLabel(headlineText);
 
+    // fallback brief (always works)
     const topTitles = headlines.slice(0, 4).map((h) => h.title);
     const fallbackBrief30s =
       `30-second brief for ${ticker}:\n` +
@@ -167,6 +169,7 @@ app.get("/api/brief", async (req, res) => {
         ? topTitles.map((t) => `- ${t}`).join("\n")
         : `- No major headlines found.`);
 
+    // Gemini attempt (never crashes)
     const gem = await geminiBriefFromHeadlines({
       ticker,
       headlines,
@@ -198,16 +201,8 @@ app.get("/api/brief", async (req, res) => {
       generatedAt: now,
       brief30s: `Placeholder 30-second brief for ${ticker}. (News fetch failed.)`,
       sentiment: { label: "Neutral", score: 0 },
-      ai: {
-        provider: "gemini",
-        used: false,
-        note: "News fetch failed before Gemini step"
-      },
-      reddit: {
-        status: "link-only",
-        searchUrl: redditSearchUrl(ticker),
-        note: "Reddit provided as a link to avoid flaky server fetches."
-      },
+      ai: { provider: "gemini", used: false, note: "News fetch failed before Gemini step" },
+      reddit: { status: "link-only", searchUrl: redditSearchUrl(ticker), note: "Reddit provided as a link to avoid flaky server fetches." },
       headlines: [],
       note: `News fetch error: ${String(err)}`
     });
