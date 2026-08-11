@@ -148,7 +148,33 @@ If there are no headlines, say: "No major headlines found."`;
   const text = result?.response?.text?.();
   return text ? text.trim() : null;
 }
+app.get("/api/reddit", async (req, res) => {
+  try {
+    const ticker = String(req.query.ticker || "").trim().toUpperCase();
+    if (!ticker) {
+      return res.status(400).json({ error: "Missing ticker. Example: /api/reddit?ticker=AAPL" });
+    }
 
+    const posts = await fetchRedditPosts(ticker);
+    const joinedText = posts.map(p => `${p.title} ${p.subreddit}`).join(" • ");
+    const sentiment = simpleSentimentLabel(joinedText);
+
+    return res.json({
+      ticker,
+      generatedAt: new Date().toISOString(),
+      sentiment,
+      posts
+    });
+  } catch (err) {
+    return res.status(200).json({
+      ticker: String(req.query.ticker || "").trim().toUpperCase(),
+      generatedAt: new Date().toISOString(),
+      sentiment: "Neutral",
+      posts: [],
+      note: `Reddit unavailable (${String(err)}).`
+    });
+  }
+});
 app.get("/api/brief", async (req, res) => {
   const ticker = String(req.query.ticker || "").trim().toUpperCase();
   if (!ticker) return res.status(400).json({ error: "Missing ticker. Use ?ticker=AAPL" });
