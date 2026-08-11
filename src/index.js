@@ -3,7 +3,6 @@ import path from "path";
 import https from "https";
 import { fileURLToPath } from "url";
 import { URL } from "url";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -72,6 +71,48 @@ function fetchText(url) {
   });
 }
 
+async function fetchJson(url, { method = "GET", headers = {}, body = null } = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = https.request(
+      {
+        method,
+        hostname: u.hostname,
+        path: u.pathname + u.search,
+        headers: {
+          "User-Agent": "StockSpadeDemo/1.0 (hackathon demo)",
+          ...headers
+        }
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => (data += chunk));
+        res.on("end", () => {
+          const ok = res.statusCode >= 200 && res.statusCode < 300;
+          if (!ok) {
+            return reject(
+              new Error(`HTTP ${res.statusCode} from ${url}: ${data.slice(0, 500)}`)
+            );
+          }
+          try {
+            resolve(JSON.parse(data));
+          } catch (e) {
+            reject(
+              new Error(
+                `Failed to parse JSON from ${url}: ${String(e)}; body=${data.slice(0, 300)}`
+              )
+            );
+          }
+        });
+      }
+    );
+
+    req.on("error", reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
 function extractRssItems(xml, limit = 8) {
   const items = [];
   const blocks = xml.split("<item>").slice(1);
@@ -103,15 +144,12 @@ function extractRssItems(xml, limit = 8) {
   return items;
 }
 
-// Gemini (never-crash) helper
-async function geminiBriefFromHeadlines({ ticker, headlines, sentimentLabel }) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return { ok: false, brief: null, note: "GEMINI_API_KEY not set" };
+// Gemini via Cloud Run proxy (never-crash)
+async function geminiBriefFromProxy({ ticker, headlines, sentimentLabel }) {
+  const proxyUrl = process.env.GEMINI_PROXY_URL;
+  if (!proxyUrl) return { ok: false, brief: null, note: "GEMINI_PROXY_URL not set" };
 
   try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
     const top = (headlines || []).slice(0, 8).map((h) => ({
       title: h.title,
       source: h.source,
@@ -132,12 +170,20 @@ HEADLINES (JSON):
 ${JSON.stringify(top, null, 2)}
 `;
 
-    const result = await model.generateContent(prompt);
-    const brief = result?.response?.text?.() || "";
-    if (!brief.trim()) return { ok: false, brief: null, note: "Empty Gemini response" };
-    return { ok: true, brief: brief.trim(), note: "Gemini generated" };
+    const payload = JSON.stringify({ prompt });
+
+    const j = await fetchJson(proxyUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: payload
+    });
+
+    const brief = (j?.text || j?.brief || "").trim();
+    if (!brief) return { ok: false, brief: null, note: "Proxy returned empty text" };
+
+    return { ok: true, brief, note: "Gemini generated via Cloud Run proxy" };
   } catch (e) {
-    return { ok: false, brief: null, note: `Gemini error: ${String(e)}` };
+    return { ok: false, brief: null, note: `Proxy/Gemini error: ${String(e)}` };
   }
 }
 
@@ -169,8 +215,8 @@ app.get("/api/brief", async (req, res) => {
         ? topTitles.map((t) => `- ${t}`).join("\n")
         : `- No major headlines found.`);
 
-    // Gemini attempt (never crashes)
-    const gem = await geminiBriefFromHeadlines({
+    // Gemini attempt via proxy (never crashes)
+    const gem = await geminiBriefFromProxy({
       ticker,
       headlines,
       sentimentLabel: sentiment.label
@@ -202,7 +248,11 @@ app.get("/api/brief", async (req, res) => {
       brief30s: `Placeholder 30-second brief for ${ticker}. (News fetch failed.)`,
       sentiment: { label: "Neutral", score: 0 },
       ai: { provider: "gemini", used: false, note: "News fetch failed before Gemini step" },
-      reddit: { status: "link-only", searchUrl: redditSearchUrl(ticker), note: "Reddit provided as a link to avoid flaky server fetches." },
+      reddit: {
+        status: "link-only",
+        searchUrl: redditSearchUrl(ticker),
+        note: "Reddit provided as a link to avoid flaky server fetches."
+      },
       headlines: [],
       note: `News fetch error: ${String(err)}`
     });
