@@ -1,21 +1,11 @@
 import express from "express";
-import path from "path";
 import https from "https";
 import { URL } from "url";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const app = express();
-const PUBLIC_DIR = path.join(process.cwd(), "public");
 
-// Serve static files (index.html, css, etc.)
-app.use(express.static(PUBLIC_DIR));
-
-// Always serve the homepage
-app.get("/", (_req, res) => {
-  res.sendFile(path.join(PUBLIC_DIR, "index.html"));
-});
-
-// Health check
+// health check
 app.get("/healthz", (_req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
