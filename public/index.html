@@ -16,6 +16,7 @@
       .row { display:flex; gap:10px; align-items:flex-end; }
       .row > div { flex:1; }
       .tiny { font-size: 12px; color:#6b7280; }
+      a { color:#111; }
     </style>
   </head>
   <body>
@@ -33,6 +34,10 @@
         </div>
         <div style="flex:0 0 160px;">
           <button id="runBtn">Get brief</button>
+          <div class="muted" style="margin-top:10px;">
+            Reddit pulse:
+            <a id="redditLink" href="https://www.reddit.com/search/?q=AAPL&sort=new" target="_blank" rel="noreferrer">open Reddit search</a>
+          </div>
         </div>
       </div>
 
@@ -43,9 +48,15 @@
       const tickerEl = document.getElementById("ticker");
       const runBtn = document.getElementById("runBtn");
       const outputEl = document.getElementById("output");
+      const redditLinkEl = document.getElementById("redditLink");
 
       function normTicker(s) {
         return (s || "").trim().toUpperCase();
+      }
+
+      function setRedditLink(ticker) {
+        const q = `$${ticker} OR ${ticker}`;
+        redditLinkEl.href = `https://www.reddit.com/search/?q=${encodeURIComponent(q)}&sort=new`;
       }
 
       runBtn.addEventListener("click", async () => {
@@ -54,6 +65,8 @@
           outputEl.textContent = "Please enter a ticker (example: AAPL).";
           return;
         }
+
+        setRedditLink(ticker);
 
         runBtn.disabled = true;
         outputEl.textContent = "Loading...";
@@ -81,7 +94,8 @@
             `${lastChecked ? "(Placeholder) New items since " + lastChecked : "First time checking this ticker."}\n\n` +
             `30-second brief:\n${data.brief30s}\n\n` +
             `Headlines:\n` +
-            (data.headlines || []).map(h => `- [${h.ts}] ${h.title}\n  ${h.url}`).join("\n");
+            (data.headlines || []).map(h => `- [${h.ts}] ${h.title}\n  ${h.url}`).join("\n") +
+            `\n\n---\nReddit pulse\nOpen: ${redditLinkEl.href}\n`;
         } catch (err) {
           outputEl.textContent = `Network error: ${String(err)}`;
         } finally {
