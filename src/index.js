@@ -4,7 +4,48 @@ import https from "https";
 import { fileURLToPath } from "url";
 import { URL } from "url";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+function simpleSentimentLabel(text) {
+  const t = (text || "").toLowerCase();
 
+  const posWords = ["beat", "beats", "up", "surge", "soar", "bull", "bullish", "buy", "upgrade", "record", "profit"];
+  const negWords = ["miss", "misses", "down", "drop", "plunge", "bear", "bearish", "sell", "downgrade", "lawsuit", "risk"];
+
+  let score = 0;
+  for (const w of posWords) if (t.includes(w)) score += 1;
+  for (const w of negWords) if (t.includes(w)) score -= 1;
+
+  if (score >= 1) return "Positive";
+  if (score <= -1) return "Negative";
+  return "Neutral";
+}
+
+async function fetchRedditPosts(ticker) {
+  const q = encodeURIComponent(`$${ticker} OR ${ticker}`);
+  const url = `https://www.reddit.com/search.json?q=${q}&sort=new&limit=8`;
+
+  const resp = await fetch(url, {
+    headers: { "User-Agent": "StockSpadeDemo/1.0 (hackathon demo)" }
+  });
+
+  if (!resp.ok) throw new Error(`Reddit HTTP ${resp.status}`);
+
+  const json = await resp.json();
+  const children = json?.data?.children || [];
+
+  return children
+    .map((c) => {
+      const p = c?.data || {};
+      return {
+        title: p.title,
+        subreddit: p.subreddit_name_prefixed || `r/${p.subreddit}`,
+        url: p.permalink ? `https://www.reddit.com${p.permalink}` : p.url,
+        ts: p.created_utc ? new Date(p.created_utc * 1000).toISOString() : null,
+        score: p.score,
+        comments: p.num_comments
+      };
+    })
+    .filter((p) => p.title && p.url);
+}
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
