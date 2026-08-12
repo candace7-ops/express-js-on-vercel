@@ -10,7 +10,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 
 // IMPORTANT: change this any time you deploy, so you can prove you're hitting the right build
-const BUILD_ID = "KEY-ONLY-2026-08-12-0715";
+const BUILD_ID = "KEY-ONLY-2026-08-12-0725";
 
 // Serve static files from /public (reliable path)
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -93,8 +93,6 @@ async function fetchJson(url, { method = "GET", headers = {}, body = null } = {}
         res.on("end", () => {
           const ok = res.statusCode >= 200 && res.statusCode < 300;
           if (!ok) {
-            // NOTE: This includes the URL in the error message. If the URL contains ?key=..., it can expose the key.
-            // We'll fix this after the demo.
             return reject(
               new Error(`HTTP ${res.statusCode} from ${url}: ${data.slice(0, 800)}`)
             );
@@ -178,12 +176,11 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
 
   const prompt = buildGeminiPrompt({ ticker, headlines, sentimentLabel });
 
-  // Force a model that your key definitely lists AND should be allowed:
-  // models/gemini-2.5-flash supports generateContent.
-  // If you set GEMINI_MODEL in Vercel, it will override this.
+  // Use "latest" alias models (more likely to be available).
+  // If GEMINI_MODEL is set in Vercel, it will override this.
   const modelsToTry = process.env.GEMINI_MODEL
     ? [process.env.GEMINI_MODEL]
-    : ["gemini-2.5-flash"];
+    : ["gemini-flash-latest"];
 
   let lastNote = null;
 
