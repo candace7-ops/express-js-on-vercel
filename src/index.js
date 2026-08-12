@@ -9,8 +9,8 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
-// IMPORTANT: change this string any time you deploy, so you can prove you're hitting the right build
-const BUILD_ID = "KEY-ONLY-2026-08-12-0610";
+// IMPORTANT: change this any time you deploy, so you can prove you're hitting the right build
+const BUILD_ID = "KEY-ONLY-2026-08-12-0635";
 
 // Serve static files from /public (reliable path)
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -176,15 +176,15 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
 
   const prompt = buildGeminiPrompt({ ticker, headlines, sentimentLabel });
 
-  // If GEMINI_MODEL is set, we only try that. Otherwise, try a safe list.
+  // If GEMINI_MODEL is set, only try that. Otherwise try a safe list.
+  // NOTE: removed gemini-2.0-flash because it can be "no longer available" (404).
   const modelsToTry = process.env.GEMINI_MODEL
     ? [process.env.GEMINI_MODEL]
     : [
         "gemini-1.5-flash-latest",
         "gemini-1.5-pro-latest",
         "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-2.0-flash"
+        "gemini-1.5-pro"
       ];
 
   let lastNote = null;
