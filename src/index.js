@@ -200,7 +200,9 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
 
     const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
     const url =
-const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${encodeURIComponent(key)}`;
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+        key
+      )}`;
 
     const payload = JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
