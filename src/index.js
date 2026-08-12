@@ -262,25 +262,27 @@ app.get("/api/brief", async (req, res) => {
         ? topTitles.map((t) => `- ${t}`).join("\n")
         : `- No major headlines found.`);
 
-    // Try proxy first (if set), then API key
-    let gem = await geminiBriefFromProxy({
+    // Try proxy first (if set), then API key.
+    // IMPORTANT: if proxy isn't set, we still want the API-key attempt's note.
+    const proxyAttempt = await geminiBriefFromProxy({
       ticker,
       headlines,
       sentimentLabel: sentiment.label
     });
 
-    if (!gem.ok) {
-      const gem2 = await geminiBriefFromApiKey({
-        ticker,
-        headlines,
-        sentimentLabel: sentiment.label
-      });
-      gem = gem2.ok ? gem2 : gem;
-    }
+    const apiAttempt = await geminiBriefFromApiKey({
+      ticker,
+      headlines,
+      sentimentLabel: sentiment.label
+    });
+
+    // Choose best available
+    const gem = proxyAttempt.ok ? proxyAttempt : (apiAttempt.ok ? apiAttempt : apiAttempt);
 
     const brief30s = gem.ok ? gem.brief : fallbackBrief30s;
 
     res.json({
+      buildId: "KEY-FALLBACK-2026-08-12-0315",
       ticker,
       generatedAt: now,
       brief30s,
@@ -299,6 +301,7 @@ app.get("/api/brief", async (req, res) => {
     });
   } catch (err) {
     res.status(200).json({
+      buildId: "KEY-FALLBACK-2026-08-12-0315",
       ticker,
       generatedAt: now,
       brief30s: `Placeholder 30-second brief for ${ticker}. (News fetch failed.)`,
