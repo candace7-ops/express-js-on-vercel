@@ -198,7 +198,6 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
   try {
     const prompt = buildGeminiPrompt({ ticker, headlines, sentimentLabel });
 
-    // You can change model if you want, but start with this:
     const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
     const url =
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
@@ -276,7 +275,6 @@ app.get("/api/brief", async (req, res) => {
         headlines,
         sentimentLabel: sentiment.label
       });
-      // Use gem2 if it worked, otherwise keep original failure note if you want
       gem = gem2.ok ? gem2 : gem;
     }
 
