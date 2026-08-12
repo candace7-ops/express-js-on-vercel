@@ -1,10 +1,8 @@
 import express from "express";
 import path from "path";
 import https from "https";
-import fs from "fs";
 import { fileURLToPath } from "url";
 import { URL } from "url";
-import { VertexAI } from "@google-cloud/vertexai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,11 +11,6 @@ const app = express();
 
 // IMPORTANT: change this any time you deploy, so you can prove you're hitting the right build
 const BUILD_ID = "KEY-ONLY-2026-08-12-0725";
-
-// Vertex AI config (override with env vars if you want)
-const VERTEX_PROJECT = process.env.GCP_PROJECT_ID || "stockspade-gemini";
-const VERTEX_LOCATION = process.env.GCP_LOCATION || "us-central1";
-const VERTEX_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 
 // Serve static files from /public (reliable path)
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -176,57 +169,60 @@ ${JSON.stringify(top, null, 2)}
 `;
 }
 
-/**
- * Vertex AI auth for Vercel:
- * Put the entire service account JSON into env var GOOGLE_APPLICATION_CREDENTIALS_JSON.
- * This writes it to /tmp and sets GOOGLE_APPLICATION_CREDENTIALS for the Google SDK.
- */
-function ensureVertexCredentials() {
-  const json = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-  if (!json) return { ok: true, note: "No GOOGLE_APPLICATION_CREDENTIALS_JSON set (using default Google auth)" };
-
-  const p = "/tmp/gcp-sa.json";
-  try {
-    if (!fs.existsSync(p)) fs.writeFileSync(p, json, "utf8");
-    process.env.GOOGLE_APPLICATION_CREDENTIALS = p;
-    return { ok: true, note: "Loaded Google credentials from GOOGLE_APPLICATION_CREDENTIALS_JSON" };
-  } catch (e) {
-    return { ok: false, note: `Failed to write credentials to /tmp: ${String(e)}` };
-  }
-}
-
-// Gemini via Vertex AI (never-crash)
-async function geminiBriefFromVertex({ ticker, headlines, sentimentLabel }) {
-  const auth = ensureVertexCredentials();
-  if (!auth.ok) return { ok: false, brief: null, note: auth.note };
+// Gemini direct via API key (never-crash) — KEY ONLY (no proxy)
+async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return { ok: false, brief: null, note: "GEMINI_API_KEY not set" };
 
   const prompt = buildGeminiPrompt({ ticker, headlines, sentimentLabel });
 
-  try {
-    const vertex_ai = new VertexAI({ project: VERTEX_PROJECT, location: VERTEX_LOCATION });
-    const model = vertex_ai.getGenerativeModel({ model: VERTEX_MODEL });
+  // Use "latest" alias models (more likely to be available).
+  // If GEMINI_MODEL is set in Vercel, it will override this.
+  const modelsToTry = process.env.GEMINI_MODEL
+    ? [process.env.GEMINI_MODEL]
+    : ["gemini-flash-latest"];
 
-    const resp = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: 300 }
-    });
+  let lastNote = null;
 
-    const brief =
-      (resp?.response?.candidates?.[0]?.content?.parts || [])
-        .map((p) => p?.text || "")
-        .join("")
-        .trim();
+  for (const model of modelsToTry) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+      key
+    )}`;
 
-    if (!brief) return { ok: false, brief: null, note: `Vertex AI returned empty text (${VERTEX_MODEL})` };
+    try {
+      const payload = JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 300
+        }
+      });
 
-    return {
-      ok: true,
-      brief,
-      note: `Gemini generated via Vertex AI (${VERTEX_MODEL}, ${VERTEX_PROJECT}/${VERTEX_LOCATION})`
-    };
-  } catch (e) {
-    return { ok: false, brief: null, note: `Vertex AI error (${VERTEX_MODEL}): ${String(e)}` };
+      const j = await fetchJson(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload
+      });
+
+      const brief =
+        (j?.candidates?.[0]?.content?.parts || [])
+          .map((p) => p?.text || "")
+          .join("")
+          .trim();
+
+      if (!brief) {
+        lastNote = `Gemini API returned empty text (${model})`;
+        continue;
+      }
+
+      return { ok: true, brief, note: `Gemini generated via API key (${model})` };
+    } catch (e) {
+      lastNote = `Gemini API error (${model}): ${String(e)}`;
+      continue;
+    }
   }
+
+  return { ok: false, brief: null, note: lastNote || "Gemini API failed" };
 }
 
 // --- main API ---
@@ -257,8 +253,8 @@ app.get("/api/brief", async (req, res) => {
         ? topTitles.map((t) => `- ${t}`).join("\n")
         : `- No major headlines found.`);
 
-    // Vertex AI: call Gemini via service account
-    const gem = await geminiBriefFromVertex({
+    // KEY ONLY: call Gemini directly using GEMINI_API_KEY
+    const gem = await geminiBriefFromApiKey({
       ticker,
       headlines,
       sentimentLabel: sentiment.label
@@ -273,7 +269,7 @@ app.get("/api/brief", async (req, res) => {
       brief30s,
       sentiment,
       ai: {
-        provider: "vertexai",
+        provider: "gemini",
         used: gem.ok,
         note: gem.note
       },
@@ -291,7 +287,7 @@ app.get("/api/brief", async (req, res) => {
       generatedAt: now,
       brief30s: `Placeholder 30-second brief for ${ticker}. (News fetch failed.)`,
       sentiment: { label: "Neutral", score: 0 },
-      ai: { provider: "vertexai", used: false, note: "News fetch failed before Gemini step" },
+      ai: { provider: "gemini", used: false, note: "News fetch failed before Gemini step" },
       reddit: {
         status: "link-only",
         searchUrl: redditSearchUrl(ticker),
