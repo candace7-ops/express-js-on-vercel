@@ -91,7 +91,7 @@ async function fetchJson(url, { method = "GET", headers = {}, body = null } = {}
           const ok = res.statusCode >= 200 && res.statusCode < 300;
           if (!ok) {
             return reject(
-              new Error(`HTTP ${res.statusCode} from ${url}: ${data.slice(0, 500)}`)
+              new Error(`HTTP ${res.statusCode} from ${url}: ${data.slice(0, 800)}`)
             );
           }
           try {
@@ -144,20 +144,15 @@ function extractRssItems(xml, limit = 8) {
   return items;
 }
 
-// Gemini via Cloud Run proxy (never-crash)
-async function geminiBriefFromProxy({ ticker, headlines, sentimentLabel }) {
-  const proxyUrl = process.env.GEMINI_PROXY_URL;
-  if (!proxyUrl) return { ok: false, brief: null, note: "GEMINI_PROXY_URL not set" };
+function buildGeminiPrompt({ ticker, headlines, sentimentLabel }) {
+  const top = (headlines || []).slice(0, 8).map((h) => ({
+    title: h.title,
+    source: h.source,
+    ts: h.ts,
+    url: h.url
+  }));
 
-  try {
-    const top = (headlines || []).slice(0, 8).map((h) => ({
-      title: h.title,
-      source: h.source,
-      ts: h.ts,
-      url: h.url
-    }));
-
-    const prompt = `You are StockSpade, an investor news assistant.
+  return `You are StockSpade, an investor news assistant.
 Write a 30-second brief for ticker ${ticker} using ONLY the headlines provided.
 Rules:
 - 6-10 short bullet lines max
@@ -169,7 +164,15 @@ Rules:
 HEADLINES (JSON):
 ${JSON.stringify(top, null, 2)}
 `;
+}
 
+// Gemini via Cloud Run proxy (never-crash)
+async function geminiBriefFromProxy({ ticker, headlines, sentimentLabel }) {
+  const proxyUrl = process.env.GEMINI_PROXY_URL;
+  if (!proxyUrl) return { ok: false, brief: null, note: "GEMINI_PROXY_URL not set" };
+
+  try {
+    const prompt = buildGeminiPrompt({ ticker, headlines, sentimentLabel });
     const payload = JSON.stringify({ prompt });
 
     const j = await fetchJson(proxyUrl, {
@@ -184,6 +187,51 @@ ${JSON.stringify(top, null, 2)}
     return { ok: true, brief, note: "Gemini generated via Cloud Run proxy" };
   } catch (e) {
     return { ok: false, brief: null, note: `Proxy/Gemini error: ${String(e)}` };
+  }
+}
+
+// Gemini direct via API key (never-crash)
+async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return { ok: false, brief: null, note: "GEMINI_API_KEY not set" };
+
+  try {
+    const prompt = buildGeminiPrompt({ ticker, headlines, sentimentLabel });
+
+    // You can change model if you want, but start with this:
+    const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+    const url =
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+        key
+      )}`;
+
+    const payload = JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 300
+      }
+    });
+
+    const j = await fetchJson(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: payload
+    });
+
+    const brief =
+      (j?.candidates?.[0]?.content?.parts || [])
+        .map((p) => p?.text || "")
+        .join("")
+        .trim();
+
+    if (!brief) {
+      return { ok: false, brief: null, note: `Gemini API returned empty text` };
+    }
+
+    return { ok: true, brief, note: `Gemini generated via API key (${model})` };
+  } catch (e) {
+    return { ok: false, brief: null, note: `Gemini API error: ${String(e)}` };
   }
 }
 
@@ -215,12 +263,22 @@ app.get("/api/brief", async (req, res) => {
         ? topTitles.map((t) => `- ${t}`).join("\n")
         : `- No major headlines found.`);
 
-    // Gemini attempt via proxy (never crashes)
-    const gem = await geminiBriefFromProxy({
+    // Try proxy first (if set), then API key
+    let gem = await geminiBriefFromProxy({
       ticker,
       headlines,
       sentimentLabel: sentiment.label
     });
+
+    if (!gem.ok) {
+      const gem2 = await geminiBriefFromApiKey({
+        ticker,
+        headlines,
+        sentimentLabel: sentiment.label
+      });
+      // Use gem2 if it worked, otherwise keep original failure note if you want
+      gem = gem2.ok ? gem2 : gem;
+    }
 
     const brief30s = gem.ok ? gem.brief : fallbackBrief30s;
 
