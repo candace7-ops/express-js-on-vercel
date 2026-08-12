@@ -9,6 +9,9 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
+// IMPORTANT: change this string any time you deploy, so you can prove you're hitting the right build
+const BUILD_ID = "KEY-ONLY-2026-08-12-0610";
+
 // Serve static files from /public (reliable path)
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 app.use(express.static(PUBLIC_DIR));
@@ -20,7 +23,7 @@ app.get("/", (_req, res) => {
 
 // Health check
 app.get("/healthz", (_req, res) => {
-  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+  res.status(200).json({ status: "ok", buildId: BUILD_ID, timestamp: new Date().toISOString() });
 });
 
 // --- helpers ---
@@ -166,72 +169,65 @@ ${JSON.stringify(top, null, 2)}
 `;
 }
 
-// Gemini via Cloud Run proxy (never-crash)
-async function geminiBriefFromProxy({ ticker, headlines, sentimentLabel }) {
-  const proxyUrl = process.env.GEMINI_PROXY_URL;
-  if (!proxyUrl) return { ok: false, brief: null, note: "GEMINI_PROXY_URL not set" };
-
-  try {
-    const prompt = buildGeminiPrompt({ ticker, headlines, sentimentLabel });
-    const payload = JSON.stringify({ prompt });
-
-    const j = await fetchJson(proxyUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: payload
-    });
-
-    const brief = (j?.text || j?.brief || "").trim();
-    if (!brief) return { ok: false, brief: null, note: "Proxy returned empty text" };
-
-    return { ok: true, brief, note: "Gemini generated via Cloud Run proxy" };
-  } catch (e) {
-    return { ok: false, brief: null, note: `Proxy/Gemini error: ${String(e)}` };
-  }
-}
-
-// Gemini direct via API key (never-crash)
+// Gemini direct via API key (never-crash) — KEY ONLY (no proxy)
 async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return { ok: false, brief: null, note: "GEMINI_API_KEY not set" };
 
-  try {
-    const prompt = buildGeminiPrompt({ ticker, headlines, sentimentLabel });
+  const prompt = buildGeminiPrompt({ ticker, headlines, sentimentLabel });
 
-    const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
-    const url =
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
-        key
-      )}`;
+  // If GEMINI_MODEL is set, we only try that. Otherwise, try a safe list.
+  const modelsToTry = process.env.GEMINI_MODEL
+    ? [process.env.GEMINI_MODEL]
+    : [
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-pro-latest",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+        "gemini-2.0-flash"
+      ];
 
-    const payload = JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 300
+  let lastNote = null;
+
+  for (const model of modelsToTry) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+      key
+    )}`;
+
+    try {
+      const payload = JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 300
+        }
+      });
+
+      const j = await fetchJson(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload
+      });
+
+      const brief =
+        (j?.candidates?.[0]?.content?.parts || [])
+          .map((p) => p?.text || "")
+          .join("")
+          .trim();
+
+      if (!brief) {
+        lastNote = `Gemini API returned empty text (${model})`;
+        continue;
       }
-    });
 
-    const j = await fetchJson(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: payload
-    });
-
-    const brief =
-      (j?.candidates?.[0]?.content?.parts || [])
-        .map((p) => p?.text || "")
-        .join("")
-        .trim();
-
-    if (!brief) {
-      return { ok: false, brief: null, note: `Gemini API returned empty text` };
+      return { ok: true, brief, note: `Gemini generated via API key (${model})` };
+    } catch (e) {
+      lastNote = `Gemini API error (${model}): ${String(e)}`;
+      continue;
     }
-
-    return { ok: true, brief, note: `Gemini generated via API key (${model})` };
-  } catch (e) {
-    return { ok: false, brief: null, note: `Gemini API error: ${String(e)}` };
   }
+
+  return { ok: false, brief: null, note: lastNote || "Gemini API failed (no model worked)" };
 }
 
 // --- main API ---
@@ -262,27 +258,17 @@ app.get("/api/brief", async (req, res) => {
         ? topTitles.map((t) => `- ${t}`).join("\n")
         : `- No major headlines found.`);
 
-    // Try proxy first (if set), then API key.
-    // IMPORTANT: if proxy isn't set, we still want the API-key attempt's note.
-    const proxyAttempt = await geminiBriefFromProxy({
+    // KEY ONLY: call Gemini directly using GEMINI_API_KEY
+    const gem = await geminiBriefFromApiKey({
       ticker,
       headlines,
       sentimentLabel: sentiment.label
     });
-
-    const apiAttempt = await geminiBriefFromApiKey({
-      ticker,
-      headlines,
-      sentimentLabel: sentiment.label
-    });
-
-    // Choose best available
-    const gem = proxyAttempt.ok ? proxyAttempt : (apiAttempt.ok ? apiAttempt : apiAttempt);
 
     const brief30s = gem.ok ? gem.brief : fallbackBrief30s;
 
     res.json({
-      buildId: "KEY-FALLBACK-2026-08-12-0315",
+      buildId: BUILD_ID,
       ticker,
       generatedAt: now,
       brief30s,
@@ -301,7 +287,7 @@ app.get("/api/brief", async (req, res) => {
     });
   } catch (err) {
     res.status(200).json({
-      buildId: "KEY-FALLBACK-2026-08-12-0315",
+      buildId: BUILD_ID,
       ticker,
       generatedAt: now,
       brief30s: `Placeholder 30-second brief for ${ticker}. (News fetch failed.)`,
