@@ -63,6 +63,11 @@
             Unlock $5/mo
           </button>
 
+          <!-- TEMP ADMIN BUTTON (remove after you fix your access) -->
+          <button id="fixPaidBtn" class="btnSecondary" style="display:block; margin-top:10px;">
+            Fix my access (admin)
+          </button>
+
           <div class="muted" style="margin-top:10px;">
             Reddit pulse:
             <a id="redditLink" href="https://www.reddit.com/search/?q=AAPL&sort=new" target="_blank" rel="noreferrer">open Reddit search</a>
@@ -108,6 +113,7 @@
       const tickerEl = document.getElementById("ticker");
       const runBtn = document.getElementById("runBtn");
       const unlockBtn = document.getElementById("unlockBtn");
+      const fixPaidBtn = document.getElementById("fixPaidBtn");
       const statusEl = document.getElementById("status");
       const briefEl = document.getElementById("brief");
       const whatsNewEl = document.getElementById("whatsNew");
@@ -173,6 +179,33 @@
           statusEl.textContent = "Checkout error.";
           briefEl.textContent = String(err);
           enableUnlock();
+        }
+      });
+
+      // TEMP ADMIN: mark current browser as paid
+      fixPaidBtn.addEventListener("click", async () => {
+        try {
+          const token = prompt("Enter DEV_TOKEN:");
+          if (!token) return;
+
+          statusEl.textContent = "Fixing access…";
+
+          const r = await fetch("/api/dev-mark-paid", {
+            method: "POST",
+            headers: { "x-dev-token": token }
+          });
+
+          const txt = await r.text();
+          alert("Fix access result:\nStatus: " + r.status + "\n\n" + txt);
+
+          if (r.status === 200) {
+            statusEl.textContent = "Access fixed. Try Get brief again.";
+            hidePaywall();
+          } else {
+            statusEl.textContent = "Fix access failed. Check token / deploy.";
+          }
+        } catch (e) {
+          alert("Fix access error: " + String(e));
         }
       });
 
