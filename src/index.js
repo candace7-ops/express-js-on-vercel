@@ -19,7 +19,7 @@ const webhookRawBody = express.raw({ type: "application/json" });
 const jsonBody = express.json();
 
 // Change on deploy to verify the running build
-const BUILD_ID = "PAID-DEBUG-HEADERS-2026-08-13-1223";
+const BUILD_ID = "PAID-CHECK-LOG-2026-08-13-1228";
 
 // Stripe (server-side)
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -396,6 +396,14 @@ app.get("/api/brief", async (req, res) => {
 
   // If paid, skip free limit
   const isPaid = (await kv.get(`ss:paid_browser:${browserId}`)) === "1";
+
+  // SIMPLE LOG FOR VERIFICATION (TEMPORARY)
+  console.log("brief paid-check", {
+    browserId,
+    isPaid,
+    paidKey: `ss:paid_browser:${browserId}`,
+    buildId: BUILD_ID
+  });
 
   // Debug headers (TEMPORARY): helps verify cookie/browserId + paid flag in DevTools Network panel
   res.setHeader("X-SS-ID", browserId);
