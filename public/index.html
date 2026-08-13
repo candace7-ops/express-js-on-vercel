@@ -17,6 +17,9 @@
       button:disabled { opacity:0.6; cursor:not-allowed; }
       .btnSecondary { background:#fff; color:#111; border: 1px solid #111; }
 
+      /* Make sure Unlock is always clickable even if something overlays */
+      #unlockBtn { position: relative; z-index: 9999; pointer-events: auto; }
+
       .muted { color:#6b7280; font-size: 13px; margin-top: 8px; }
       .row { display:flex; gap:12px; align-items:flex-end; flex-wrap: wrap; }
       .row > div { flex: 1 1 260px; min-width: 0; }
@@ -114,7 +117,6 @@
       const aiPillEl = document.getElementById("aiPill");
 
       function normTicker(s) {
-        // Prevent weird characters that can cause URL/fetch issues
         return (s || "")
           .toUpperCase()
           .replace(/[^A-Z]/g, "")
@@ -144,6 +146,9 @@
       function showPaywall() { unlockBtn.style.display = "block"; }
       function hidePaywall() { unlockBtn.style.display = "none"; }
 
+      // Make sure unlock is never left disabled
+      function enableUnlock() { unlockBtn.disabled = false; }
+
       unlockBtn.addEventListener("click", async () => {
         try {
           unlockBtn.disabled = true;
@@ -155,15 +160,19 @@
           if (!resp.ok || !data.url) {
             statusEl.textContent = "Could not open checkout.";
             briefEl.textContent = `Error: ${data.error || resp.statusText || "Unknown error"}`;
-            unlockBtn.disabled = false;
+            enableUnlock();
             return;
           }
 
+          // Redirect
           window.location.assign(data.url);
+
+          // If the browser blocks navigation for any reason, re-enable after a moment
+          setTimeout(enableUnlock, 3000);
         } catch (err) {
           statusEl.textContent = "Checkout error.";
           briefEl.textContent = String(err);
-          unlockBtn.disabled = false;
+          enableUnlock();
         }
       });
 
