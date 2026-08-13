@@ -313,7 +313,7 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
 
 // ---------- Stripe (create Checkout session) ----------
 
-app.post("/api/create-checkout-session", async (_req, res) => {
+app.post("/api/create-checkout-session", async (req, res) => {
   try {
     if (!process.env.STRIPE_SECRET_KEY) {
       return res.status(500).json({ error: "STRIPE_SECRET_KEY not set" });
