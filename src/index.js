@@ -389,7 +389,16 @@ app.post("/api/stripe-webhook", webhookRawBody, async (req, res) => {
 });
 
 // ---------- API ----------
+app.post("/api/dev-mark-paid", async (req, res) => {
+  const token = req.headers["x-dev-token"];
+  if (!process.env.DEV_TOKEN || token !== process.env.DEV_TOKEN) {
+    return res.status(401).json({ error: "unauthorized" });
+  }
 
+  const browserId = getOrSetBrowserId(req, res);
+  await kv.set(`ss:paid_browser:${browserId}`, "1");
+  return res.json({ ok: true, browserId });
+});
 app.get("/api/brief", async (req, res) => {
   // Identify browser (cookie)
   const browserId = getOrSetBrowserId(req, res);
