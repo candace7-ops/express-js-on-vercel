@@ -12,7 +12,7 @@ const app = express();
 
 // Needed for POST JSON bodies (Stripe session creation)
 app.use(express.json());
-
+const webhookRawBody = express.raw({ type: "application/json" });
 // Change on deploy to verify the running build
 const BUILD_ID = "KEY-ONLY-2026-08-12-0725";
 
