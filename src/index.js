@@ -14,10 +14,13 @@ const app = express();
 // Stripe webhook needs raw body (do not use express.json() for this route)
 const webhookRawBody = express.raw({ type: "application/json" });
 
-// Needed for POST JSON bodies (NOT used for webhook route)
+// IMPORTANT:
+// Do NOT use app.use(express.json()) globally, because it breaks Stripe webhook signature verification on Vercel.
+// Instead, apply JSON parsing only to the routes that need it.
+const jsonBody = express.json();
 
 // Change on deploy to verify the running build
-const BUILD_ID = "KEY-ONLY-2026-08-12-0725";
+const BUILD_ID = "WEBHOOK-RAW-FIX-2026-08-13-1218";
 
 // Stripe (server-side)
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -310,7 +313,7 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
 
 // ---------- Stripe (create Checkout session) ----------
 
-app.post("/api/create-checkout-session", express.json(), async (req, res) => {
+app.post("/api/create-checkout-session", jsonBody, async (req, res) => {
   try {
     const browserId = getOrSetBrowserId(req, res);
 
