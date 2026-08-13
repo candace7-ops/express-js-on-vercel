@@ -378,6 +378,7 @@ const browserId = session.client_reference_id;
 // ---------- API ----------
 
 app.get("/api/brief", async (req, res) => {
+  const isPaid = (await kv.get(`ss:paid_browser:${browserId}`)) === "1";
   // Identify browser (cookie)
   const browserId = getOrSetBrowserId(req, res);
 
