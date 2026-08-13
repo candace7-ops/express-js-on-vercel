@@ -23,7 +23,9 @@ app.get("/", (_req, res) => {
 
 // Health check
 app.get("/healthz", (_req, res) => {
-  res.status(200).json({ status: "ok", buildId: BUILD_ID, timestamp: new Date().toISOString() });
+  res
+    .status(200)
+    .json({ status: "ok", buildId: BUILD_ID, timestamp: new Date().toISOString() });
 });
 
 // --- helpers ---
@@ -37,12 +39,40 @@ function simpleSentimentLabel(text) {
   const t = (text || "").toLowerCase();
 
   const pos = [
-    "beat","beats","up","surge","soar","rally","bull","bullish","buy",
-    "upgrade","record","profit","growth","strong","tops","raises"
+    "beat",
+    "beats",
+    "up",
+    "surge",
+    "soar",
+    "rally",
+    "bull",
+    "bullish",
+    "buy",
+    "upgrade",
+    "record",
+    "profit",
+    "growth",
+    "strong",
+    "tops",
+    "raises"
   ];
   const neg = [
-    "miss","misses","down","drop","plunge","bear","bearish","sell",
-    "downgrade","cut","lawsuit","probe","risk","weak","falls","warning"
+    "miss",
+    "misses",
+    "down",
+    "drop",
+    "plunge",
+    "bear",
+    "bearish",
+    "sell",
+    "downgrade",
+    "cut",
+    "lawsuit",
+    "probe",
+    "risk",
+    "weak",
+    "falls",
+    "warning"
   ];
 
   let score = 0;
@@ -74,6 +104,16 @@ function fetchText(url) {
   });
 }
 
+function redactSecrets(str) {
+  const s = String(str || "");
+  // Strip query param "key=...."
+  let out = s.replace(/([?&]key=)[^&\s)"]+/gi, "$1[REDACTED]");
+  // Common API key-ish tokens (best-effort)
+  out = out.replace(/\bAIza[0-9A-Za-z\-_]{10,}\b/g, "[REDACTED]");
+  out = out.replace(/\bsk-[0-9A-Za-z\-_]{10,}\b/g, "[REDACTED]");
+  return out;
+}
+
 async function fetchJson(url, { method = "GET", headers = {}, body = null } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
@@ -94,7 +134,11 @@ async function fetchJson(url, { method = "GET", headers = {}, body = null } = {}
           const ok = res.statusCode >= 200 && res.statusCode < 300;
           if (!ok) {
             return reject(
-              new Error(`HTTP ${res.statusCode} from ${url}: ${data.slice(0, 800)}`)
+              new Error(
+                `HTTP ${res.statusCode} from ${redactSecrets(url)}: ${redactSecrets(
+                  data.slice(0, 800)
+                )}`
+              )
             );
           }
           try {
@@ -102,7 +146,9 @@ async function fetchJson(url, { method = "GET", headers = {}, body = null } = {}
           } catch (e) {
             reject(
               new Error(
-                `Failed to parse JSON from ${url}: ${String(e)}; body=${data.slice(0, 300)}`
+                `Failed to parse JSON from ${redactSecrets(url)}: ${String(
+                  e
+                )}; body=${redactSecrets(data.slice(0, 300))}`
               )
             );
           }
@@ -169,15 +215,13 @@ ${JSON.stringify(top, null, 2)}
 `;
 }
 
-// Gemini direct via API key (never-crash) — KEY ONLY (no proxy)
+// Gemini direct via API key (never-crash)
 async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return { ok: false, brief: null, note: "GEMINI_API_KEY not set" };
 
   const prompt = buildGeminiPrompt({ ticker, headlines, sentimentLabel });
 
-  // Use "latest" alias models (more likely to be available).
-  // If GEMINI_MODEL is set in Vercel, it will override this.
   const modelsToTry = process.env.GEMINI_MODEL
     ? [process.env.GEMINI_MODEL]
     : ["gemini-flash-latest"];
@@ -215,9 +259,10 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
         continue;
       }
 
-      return { ok: true, brief, note: `Gemini generated via API key (${model})` };
+      return { ok: true, brief, note: `Gemini generated (${model})` };
     } catch (e) {
-      lastNote = `Gemini API error (${model}): ${String(e)}`;
+      // IMPORTANT: never leak the key or full URL in notes returned to the client
+      lastNote = redactSecrets(`Gemini API error (${model}): ${String(e)}`);
       continue;
     }
   }
@@ -253,7 +298,6 @@ app.get("/api/brief", async (req, res) => {
         ? topTitles.map((t) => `- ${t}`).join("\n")
         : `- No major headlines found.`);
 
-    // KEY ONLY: call Gemini directly using GEMINI_API_KEY
     const gem = await geminiBriefFromApiKey({
       ticker,
       headlines,
@@ -294,7 +338,7 @@ app.get("/api/brief", async (req, res) => {
         note: "Reddit provided as a link to avoid flaky server fetches."
       },
       headlines: [],
-      note: `News fetch error: ${String(err)}`
+      note: redactSecrets(`News fetch error: ${String(err)}`)
     });
   }
 });
