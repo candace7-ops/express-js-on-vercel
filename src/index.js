@@ -337,7 +337,10 @@ app.post("/api/create-checkout-session", async (req, res) => {
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
       const customerId = session.customer;
-
+const browserId = session.client_reference_id;
+      if (browserId) {
+        await kv.set(`ss:paid_browser:${browserId}`, "1");
+      }
       if (customerId) {
         await kv.set(`ss:paid_customer:${customerId}`, "1");
       }
