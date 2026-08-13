@@ -315,6 +315,7 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
 
 app.post("/api/create-checkout-session", async (req, res) => {
   try {
+    const browserId = getOrSetBrowserId(req, res);
     if (!process.env.STRIPE_SECRET_KEY) {
       return res.status(500).json({ error: "STRIPE_SECRET_KEY not set" });
       app.post("/api/stripe-webhook", webhookRawBody, async (req, res) => {
