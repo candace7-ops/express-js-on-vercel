@@ -14,13 +14,12 @@ const app = express();
 // Stripe webhook needs raw body (do not use express.json() for this route)
 const webhookRawBody = express.raw({ type: "application/json" });
 
-// IMPORTANT:
-// Do NOT use app.use(express.json()) globally, because it breaks Stripe webhook signature verification on Vercel.
-// Instead, apply JSON parsing only to the routes that need it.
+// IMPORTANT: Do NOT use app.use(express.json()) globally, because it breaks Stripe webhook signature verification on Vercel.
+// Apply JSON parsing only to routes that need it.
 const jsonBody = express.json();
 
 // Change on deploy to verify the running build
-const BUILD_ID = "WEBHOOK-RAW-FIX-2026-08-13-1218";
+const BUILD_ID = "PAID-DEBUG-HEADERS-2026-08-13-1223";
 
 // Stripe (server-side)
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -397,6 +396,10 @@ app.get("/api/brief", async (req, res) => {
 
   // If paid, skip free limit
   const isPaid = (await kv.get(`ss:paid_browser:${browserId}`)) === "1";
+
+  // Debug headers (TEMPORARY): helps verify cookie/browserId + paid flag in DevTools Network panel
+  res.setHeader("X-SS-ID", browserId);
+  res.setHeader("X-SS-PAID", isPaid ? "1" : "0");
 
   if (!isPaid) {
     // Free limit: 3 per UTC day (KV-backed)
