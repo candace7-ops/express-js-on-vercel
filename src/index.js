@@ -5,14 +5,18 @@ import { fileURLToPath } from "url";
 import { URL } from "url";
 import Stripe from "stripe";
 import { kv } from "@vercel/kv";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 
-// Needed for POST JSON bodies (Stripe session creation)
-app.use(express.json());
+// Stripe webhook needs raw body (do not use express.json() for this route)
 const webhookRawBody = express.raw({ type: "application/json" });
+
+// Needed for POST JSON bodies (NOT used for webhook route)
+app.use(express.json());
+
 // Change on deploy to verify the running build
 const BUILD_ID = "KEY-ONLY-2026-08-12-0725";
 
@@ -37,7 +41,7 @@ app.get("/healthz", (_req, res) => {
 // ---------- simple cookie + free limit (no login) ----------
 
 // NOTE: This is in-memory. On Vercel it can reset sometimes.
-// Good enough to prove the paywall works. Later we can use Vercel KV for persistence.
+// We'll move this to KV later, once everything is stable.
 const DAILY_COUNTS = new Map();
 
 function parseCookies(req) {
@@ -65,8 +69,7 @@ function newId() {
 }
 
 function todayKeyUTC() {
-  // "YYYY-MM-DD" in UTC
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
 }
 
 function getOrSetBrowserId(req, res) {
@@ -74,7 +77,6 @@ function getOrSetBrowserId(req, res) {
   let id = cookies.ss_id;
   if (!id) {
     id = newId();
-    // 1 year cookie
     res.setHeader(
       "Set-Cookie",
       `ss_id=${encodeURIComponent(id)}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`
@@ -316,42 +318,9 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
 app.post("/api/create-checkout-session", async (req, res) => {
   try {
     const browserId = getOrSetBrowserId(req, res);
+
     if (!process.env.STRIPE_SECRET_KEY) {
       return res.status(500).json({ error: "STRIPE_SECRET_KEY not set" });
-      app.post("/api/stripe-webhook", webhookRawBody, async (req, res) => {
-  let event;
-
-  try {
-    const sig = req.headers["stripe-signature"];
-    event = stripe.webhooks.constructEvent(
-      req.body, // raw Buffer
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
-  } catch (err) {
-    console.error("Webhook signature verification failed:", err?.message || err);
-    return res.status(400).send("Webhook Error");
-  }
-
-  try {
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      const customerId = session.customer;
-const browserId = session.client_reference_id;
-      if (browserId) {
-        await kv.set(`ss:paid_browser:${browserId}`, "1");
-      }
-      if (customerId) {
-        await kv.set(`ss:paid_customer:${customerId}`, "1");
-      }
-    }
-
-    return res.json({ received: true });
-  } catch (err) {
-    console.error("Webhook handler error:", err);
-    return res.status(500).send("Webhook handler failed");
-  }
-});
     }
     if (!process.env.STRIPE_PRICE_ID) {
       return res.status(500).json({ error: "STRIPE_PRICE_ID not set" });
@@ -375,27 +344,69 @@ const browserId = session.client_reference_id;
   }
 });
 
+// ---------- Stripe webhook ----------
+
+app.post("/api/stripe-webhook", webhookRawBody, async (req, res) => {
+  let event;
+
+  try {
+    const sig = req.headers["stripe-signature"];
+    event = stripe.webhooks.constructEvent(
+      req.body, // raw Buffer
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error("Webhook signature verification failed:", err?.message || err);
+    return res.status(400).send("Webhook Error");
+  }
+
+  try {
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      const browserId = session.client_reference_id;
+      const customerId = session.customer;
+
+      if (browserId) {
+        await kv.set(`ss:paid_browser:${browserId}`, "1");
+      }
+      if (customerId) {
+        await kv.set(`ss:paid_customer:${customerId}`, "1");
+      }
+    }
+
+    return res.json({ received: true });
+  } catch (err) {
+    console.error("Webhook handler error:", err);
+    return res.status(500).send("Webhook handler failed");
+  }
+});
+
 // ---------- API ----------
 
 app.get("/api/brief", async (req, res) => {
-  const isPaid = (await kv.get(`ss:paid_browser:${browserId}`)) === "1";
   // Identify browser (cookie)
   const browserId = getOrSetBrowserId(req, res);
 
-  // Free limit: 3 per UTC day
-  const day = todayKeyUTC();
-  const key = `${day}:${browserId}`;
-  const used = DAILY_COUNTS.get(key) || 0;
+  // If paid, skip free limit
+  const isPaid = (await kv.get(`ss:paid_browser:${browserId}`)) === "1";
 
-  if (used >= 3) {
-    return res.status(402).json({
-      paywall: true,
-      message: "Free limit reached (3/day). Unlock unlimited checks for $5/month."
-    });
+  if (!isPaid) {
+    // Free limit: 3 per UTC day (in-memory for now)
+    const day = todayKeyUTC();
+    const key = `${day}:${browserId}`;
+    const used = DAILY_COUNTS.get(key) || 0;
+
+    if (used >= 3) {
+      return res.status(402).json({
+        paywall: true,
+        message: "Free limit reached (3/day). Unlock unlimited checks for $5/month."
+      });
+    }
+
+    // Count this request
+    DAILY_COUNTS.set(key, used + 1);
   }
-
-  // Count this request
-  DAILY_COUNTS.set(key, used + 1);
 
   const ticker = String(req.query.ticker || "")
     .trim()
