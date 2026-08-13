@@ -359,6 +359,7 @@ app.post("/api/create-checkout-session", async (req, res) => {
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
+      client_reference_id: browserId,
       line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
       success_url: `${process.env.APP_URL}/?paid=1`,
       cancel_url: `${process.env.APP_URL}/?canceled=1`
