@@ -3,14 +3,21 @@ import path from "path";
 import https from "https";
 import { fileURLToPath } from "url";
 import { URL } from "url";
+import Stripe from "stripe";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 
+// Needed for POST JSON bodies (Stripe session creation)
+app.use(express.json());
+
 // Change on deploy to verify the running build
 const BUILD_ID = "KEY-ONLY-2026-08-12-0725";
+
+// Stripe (server-side)
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 app.use(express.static(PUBLIC_DIR));
@@ -254,6 +261,34 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
     return { ok: false, brief: null, note: redactSecrets(`Gemini error: ${String(e)}`) };
   }
 }
+
+// ---------- Stripe (create Checkout session) ----------
+
+app.post("/api/create-checkout-session", async (_req, res) => {
+  try {
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return res.status(500).json({ error: "STRIPE_SECRET_KEY not set" });
+    }
+    if (!process.env.STRIPE_PRICE_ID) {
+      return res.status(500).json({ error: "STRIPE_PRICE_ID not set" });
+    }
+    if (!process.env.APP_URL) {
+      return res.status(500).json({ error: "APP_URL not set" });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      success_url: `${process.env.APP_URL}/?paid=1`,
+      cancel_url: `${process.env.APP_URL}/?canceled=1`
+    });
+
+    return res.json({ url: session.url });
+  } catch (err) {
+    console.error("create-checkout-session error:", err);
+    return res.status(500).json({ error: "Failed to create checkout session" });
+  }
+});
 
 // ---------- API ----------
 
