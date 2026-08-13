@@ -19,7 +19,7 @@ const webhookRawBody = express.raw({ type: "application/json" });
 const jsonBody = express.json();
 
 // Change on deploy to verify the running build
-const BUILD_ID = "DEV-MARK-PAID-READBACK-2026-08-13-1348";
+const BUILD_ID = "KV-DIAG-PAIDRAW-2026-08-13-1356";
 
 // Stripe (server-side)
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -416,18 +416,20 @@ app.get("/api/brief", async (req, res) => {
   // Identify browser (cookie)
   const browserId = getOrSetBrowserId(req, res);
 
-  // If paid, skip free limit
-  const isPaid = (await kv.get(`ss:paid_browser:${browserId}`)) === "1";
+  const paidKey = `ss:paid_browser:${browserId}`;
+  const paidRaw = await kv.get(paidKey);
+  const isPaid = String(paidRaw) === "1";
 
-  // SIMPLE LOG FOR VERIFICATION (TEMPORARY)
   console.log("brief paid-check", {
     browserId,
+    paidKey,
+    paidRaw,
     isPaid,
-    paidKey: `ss:paid_browser:${browserId}`,
+    kvUrlPrefix: String(process.env.KV_REST_API_URL || process.env.KV_URL || "").slice(0, 40),
     buildId: BUILD_ID
   });
 
-  // Debug headers (TEMPORARY): helps verify cookie/browserId + paid flag in DevTools Network panel
+  // Debug headers (TEMPORARY)
   res.setHeader("X-SS-ID", browserId);
   res.setHeader("X-SS-PAID", isPaid ? "1" : "0");
 
@@ -441,7 +443,6 @@ app.get("/api/brief", async (req, res) => {
 
     // Set TTL only when key is first created
     if (used === 1) {
-      // Keep around long enough to avoid edge cases; key is day-scoped anyway.
       await kv.expire(counterKey, 60 * 60 * 24 * 2); // 48h
     }
 
