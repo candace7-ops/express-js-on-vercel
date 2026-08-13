@@ -20,7 +20,7 @@ const webhookRawBody = express.raw({ type: "application/json" });
 const jsonBody = express.json();
 
 // Change on deploy to verify the running build
-const BUILD_ID = "VERTEX-GEMINI-COMPLETE-2026-08-13";
+const BUILD_ID = "VERTEX-GEMINI-4PART-2026-08-13";
 
 // Stripe (server-side)
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -253,7 +253,6 @@ function extractRssItems(xml, limit = 8) {
 
   return items;
 }
-
 function buildGeminiPrompt({ ticker, headlines, sentimentLabel }) {
   const top = (headlines || []).slice(0, 8).map((h) => ({
     title: h.title,
@@ -275,6 +274,7 @@ HEADLINES (JSON):
 ${JSON.stringify(top, null, 2)}
 `;
 }
+
 // ---------- Vertex auth + Gemini (Google Cloud) ----------
 
 function readServiceAccountFromEnv() {
@@ -359,7 +359,7 @@ async function geminiBriefFromVertex({ ticker, headlines, sentimentLabel }) {
     return {
       ok: false,
       brief: null,
-      note: "Missing project id (set GOOGLE_CLOUD_PROJECT or use credentials JSON with project_id)"
+      note: "Missing project id (set GOOGLE_CLOUD_PROJECT or include project_id in creds JSON)"
     };
   }
 
@@ -436,11 +436,11 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
     if (!brief) return { ok: false, brief: null, note: "Gemini returned empty response" };
     return { ok: true, brief, note: `AI Studio Gemini generated (${model})` };
   } catch (e) {
-    return { ok: false, brief: null, note: redactSecrets(`AI Studio Gemini error: ${String(e?.message || e)}`) };
+    return { ok: false, brief: null, note: redactSecrets(`AI Studio Gemini error: ${String(e)}`) };
   }
 }
 
-// ---------- status endpoint (safe) ----------
+// ---------- safe status endpoint ----------
 
 app.get("/api/ai-status", async (_req, res) => {
   try {
@@ -485,4 +485,152 @@ app.post("/api/create-checkout-session", jsonBody, async (req, res) => {
     }
 
     const session = await stripe.checkout.sessions.create({
-      mode: "
+      mode: "subscription",
+      client_reference_id: browserId,
+      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      success_url: `${process.env.APP_URL}/?paid=1`,
+      cancel_url: `${process.env.APP_URL}/?canceled=1`
+    });
+
+    return res.json({ url: session.url });
+  } catch (err) {
+    console.error("create-checkout-session error:", err);
+    return res.status(500).json({ error: "Failed to create checkout session" });
+  }
+});
+
+// ---------- Stripe webhook ----------
+
+app.post("/api/stripe-webhook", webhookRawBody, async (req, res) => {
+  let event;
+
+  try {
+    const sig = req.headers["stripe-signature"];
+    event = stripe.webhooks.constructEvent(
+      req.body, // raw Buffer
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error("Webhook signature verification failed:", err?.message || err);
+    return res.status(400).send("Webhook Error");
+  }
+
+  try {
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      const browserId = session.client_reference_id;
+      const customerId = session.customer;
+
+      if (browserId) {
+        await kv.set(`ss:paid_browser:${browserId}`, "1");
+      }
+      if (customerId) {
+        await kv.set(`ss:paid_customer:${customerId}`, "1");
+      }
+    }
+
+    return res.json({ received: true });
+  } catch (err) {
+    console.error("Webhook handler error:", err);
+    return res.status(500).send("Webhook handler failed");
+  }
+});
+// ---------- API ----------
+
+app.get("/api/brief", async (req, res) => {
+  // Identify browser (cookie)
+  const browserId = getOrSetBrowserId(req, res);
+
+  // If paid, skip free limit
+  const isPaid = String(await kv.get(`ss:paid_browser:${browserId}`)) === "1";
+
+  if (!isPaid) {
+    // Free limit: 3 per UTC day (KV-backed)
+    const day = todayKeyUTC();
+    const counterKey = `ss:freecount:${day}:${browserId}`;
+
+    // Atomic increment in Redis
+    const used = await kv.incr(counterKey);
+
+    // Set TTL only when key is first created
+    if (used === 1) {
+      await kv.expire(counterKey, 60 * 60 * 24 * 2); // 48h
+    }
+
+    if (used > 3) {
+      return res.status(402).json({
+        paywall: true,
+        message: "Free limit reached (3/day). Unlock unlimited checks for $5/month."
+      });
+    }
+  }
+
+  const ticker = String(req.query.ticker || "").trim().toUpperCase();
+  if (!ticker) return res.status(400).json({ error: "Missing ticker. Use ?ticker=AAPL" });
+
+  const now = new Date().toISOString();
+
+  let headlines = [];
+  let sentiment = { label: "Neutral", score: 0 };
+
+  try {
+    const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(
+      `${ticker} stock`
+    )}&hl=en-US&gl=US&ceid=US:en`;
+
+    const xml = await httpsRequestText(rssUrl);
+    headlines = extractRssItems(xml, 8);
+
+    const headlineText = headlines.map((h) => h.title).join(" • ");
+    sentiment = simpleSentimentLabel(headlineText);
+  } catch {
+    // keep fallback behavior
+  }
+
+  const topTitles = headlines.slice(0, 4).map((h) => h.title);
+  const fallbackBrief30s =
+    `30-second brief for ${ticker}:\n` +
+    `- Tone: ${sentiment.label} (headline-based)\n` +
+    (topTitles.length
+      ? topTitles.map((t) => `- ${t}`).join("\n")
+      : `- No major headlines found.`);
+
+  // Try Vertex first; if it fails, fall back to API-key Gemini; if that fails, use fallback brief.
+  let gem = await geminiBriefFromVertex({
+    ticker,
+    headlines,
+    sentimentLabel: sentiment.label
+  });
+
+  if (!gem.ok) {
+    gem = await geminiBriefFromApiKey({
+      ticker,
+      headlines,
+      sentimentLabel: sentiment.label
+    });
+  }
+
+  const brief30s = gem.ok ? gem.brief : fallbackBrief30s;
+
+  res.json({
+    buildId: BUILD_ID,
+    ticker,
+    generatedAt: now,
+    brief30s,
+    sentiment,
+    ai: {
+      provider: gem.ok ? (gem.note?.startsWith("Vertex") ? "vertex-gemini" : "gemini") : "none",
+      used: gem.ok,
+      note: gem.note
+    },
+    reddit: {
+      status: "link-only",
+      searchUrl: redditSearchUrl(ticker),
+      note: "Reddit often blocks server-to-server requests (403). This demo provides a reliable Reddit search link."
+    },
+    headlines
+  });
+});
+
+export default app;
