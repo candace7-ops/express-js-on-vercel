@@ -15,8 +15,6 @@
       input { width: 100%; font-size: 16px; padding: 12px; border:1px solid #d1d5db; border-radius: 10px; box-sizing: border-box; }
       button { padding: 12px 14px; font-size: 16px; border-radius: 10px; border: 1px solid #111; background:#111; color:#fff; cursor:pointer; width: 100%; }
       button:disabled { opacity:0.6; cursor:not-allowed; }
-
-      /* New: secondary button style for Unlock */
       .btnSecondary { background:#fff; color:#111; border: 1px solid #111; }
 
       .muted { color:#6b7280; font-size: 13px; margin-top: 8px; }
@@ -52,12 +50,12 @@
         <div>
           <label for="ticker">Ticker</label>
           <input id="ticker" placeholder="e.g., AAPL" autocomplete="off" />
-          <div class="muted">No login. “Last checked” is stored in your browser.</div>
+          <div class="muted">No login. Free plan allows 3 briefs/day per browser.</div>
         </div>
+
         <div style="flex:0 0 200px; min-width: 200px;">
           <button id="runBtn">Get brief</button>
 
-          <!-- New: Unlock button (hidden until paywall) -->
           <button id="unlockBtn" class="btnSecondary" style="display:none; margin-top:10px;">
             Unlock $5/mo
           </button>
@@ -97,7 +95,7 @@
     </div>
 
     <script>
-      // Hard guard: if anything errors, show it instead of blank screen
+      // Show JS errors on page
       window.addEventListener("error", (e) => {
         const el = document.getElementById("error");
         el.style.display = "block";
@@ -116,7 +114,11 @@
       const aiPillEl = document.getElementById("aiPill");
 
       function normTicker(s) {
-        return (s || "").trim().toUpperCase();
+        // Prevent weird characters that can cause URL/fetch issues
+        return (s || "")
+          .toUpperCase()
+          .replace(/[^A-Z]/g, "")
+          .slice(0, 10);
       }
 
       function setRedditLink(ticker) {
@@ -139,15 +141,9 @@
         el.textContent = text;
       }
 
-      function showPaywall() {
-        unlockBtn.style.display = "block";
-      }
+      function showPaywall() { unlockBtn.style.display = "block"; }
+      function hidePaywall() { unlockBtn.style.display = "none"; }
 
-      function hidePaywall() {
-        unlockBtn.style.display = "none";
-      }
-
-      // New: Unlock flow -> create checkout session -> redirect
       unlockBtn.addEventListener("click", async () => {
         try {
           unlockBtn.disabled = true;
@@ -174,7 +170,7 @@
       runBtn.addEventListener("click", async () => {
         const ticker = normTicker(tickerEl.value);
         if (!ticker) {
-          statusEl.textContent = "Please enter a ticker (example: AAPL).";
+          statusEl.textContent = "Please enter letters only (example: AAPL).";
           return;
         }
 
@@ -191,16 +187,16 @@
         try {
           const resp = await fetch(`/api/brief?ticker=${encodeURIComponent(ticker)}`);
 
-          // New: if paywall triggered, show Unlock button
           if (resp.status === 402) {
             const data = await resp.json().catch(() => ({}));
             showPaywall();
             statusEl.textContent = "Free limit reached. Unlock unlimited checks.";
             briefEl.textContent = data?.message || "You’ve used your 3 free checks today.";
+            runBtn.disabled = false;
             return;
           }
 
-          const data = await resp.json();
+          const data = await resp.json().catch(() => ({}));
 
           if (!resp.ok) {
             statusEl.textContent = "Error loading brief.";
@@ -208,20 +204,16 @@
             return;
           }
 
-          // Tone pill
           const tone = data?.sentiment?.label || "Neutral";
           if (tone === "Bullish") setPill(tonePillEl, "bull", "Tone: Bullish");
           else if (tone === "Bearish") setPill(tonePillEl, "bear", "Tone: Bearish");
           else setPill(tonePillEl, "neutral", "Tone: Neutral");
 
-          // Gemini pill
-          const used = !!data?.ai?.used;
-          setPill(aiPillEl, used ? "bull" : "neutral", "Gemini: " + (used ? "ON" : "OFF"));
+          const usedAI = !!data?.ai?.used;
+          setPill(aiPillEl, usedAI ? "bull" : "neutral", "Gemini: " + (usedAI ? "ON" : "OFF"));
 
-          // Brief text
           briefEl.textContent = data.brief30s || "(no brief)";
 
-          // Headlines list (clickable)
           const headlines = Array.isArray(data.headlines) ? data.headlines : [];
           headlinesEl.innerHTML = headlines.map(h => {
             const when = h.ts ? new Date(h.ts).toLocaleString() : "";
@@ -231,7 +223,6 @@
             return `<li><a href="${url}" target="_blank" rel="noopener noreferrer">${title}</a> <span class="tiny">(${when}${source})</span></li>`;
           }).join("");
 
-          // What's new since last check
           const newHeadlines = headlines.filter(h => {
             const hMs = parseTsToMs(h.ts);
             if (!hMs) return false;
@@ -251,9 +242,7 @@
               `</ul>`;
           }
 
-          // Update last checked (ms)
           localStorage.setItem(lastKey, String(Date.now()));
-
           statusEl.textContent = `Loaded ${ticker}.`;
         } catch (err) {
           statusEl.textContent = "Network error.";
@@ -267,14 +256,9 @@
         if (e.key === "Enter") runBtn.click();
       });
 
-      // If user returns from Stripe success, show a friendly message (optional)
       const params = new URLSearchParams(window.location.search);
-      if (params.get("paid") === "1") {
-        statusEl.textContent = "Payment complete. Thanks! (Unlimited will turn on after we add the webhook step.)";
-      }
-      if (params.get("canceled") === "1") {
-        statusEl.textContent = "Checkout canceled.";
-      }
+      if (params.get("paid") === "1") statusEl.textContent = "Payment complete. Thanks!";
+      if (params.get("canceled") === "1") statusEl.textContent = "Checkout canceled.";
     </script>
   </body>
 </html>
