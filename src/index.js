@@ -15,7 +15,6 @@ const app = express();
 const webhookRawBody = express.raw({ type: "application/json" });
 
 // Needed for POST JSON bodies (NOT used for webhook route)
-app.use(express.json());
 
 // Change on deploy to verify the running build
 const BUILD_ID = "KEY-ONLY-2026-08-12-0725";
