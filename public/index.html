@@ -15,6 +15,10 @@
       input { width: 100%; font-size: 16px; padding: 12px; border:1px solid #d1d5db; border-radius: 10px; box-sizing: border-box; }
       button { padding: 12px 14px; font-size: 16px; border-radius: 10px; border: 1px solid #111; background:#111; color:#fff; cursor:pointer; width: 100%; }
       button:disabled { opacity:0.6; cursor:not-allowed; }
+
+      /* New: secondary button style for Unlock */
+      .btnSecondary { background:#fff; color:#111; border: 1px solid #111; }
+
       .muted { color:#6b7280; font-size: 13px; margin-top: 8px; }
       .row { display:flex; gap:12px; align-items:flex-end; flex-wrap: wrap; }
       .row > div { flex: 1 1 260px; min-width: 0; }
@@ -52,6 +56,12 @@
         </div>
         <div style="flex:0 0 200px; min-width: 200px;">
           <button id="runBtn">Get brief</button>
+
+          <!-- New: Unlock button (hidden until paywall) -->
+          <button id="unlockBtn" class="btnSecondary" style="display:none; margin-top:10px;">
+            Unlock $5/mo
+          </button>
+
           <div class="muted" style="margin-top:10px;">
             Reddit pulse:
             <a id="redditLink" href="https://www.reddit.com/search/?q=AAPL&sort=new" target="_blank" rel="noreferrer">open Reddit search</a>
@@ -96,6 +106,7 @@
 
       const tickerEl = document.getElementById("ticker");
       const runBtn = document.getElementById("runBtn");
+      const unlockBtn = document.getElementById("unlockBtn");
       const statusEl = document.getElementById("status");
       const briefEl = document.getElementById("brief");
       const whatsNewEl = document.getElementById("whatsNew");
@@ -128,6 +139,38 @@
         el.textContent = text;
       }
 
+      function showPaywall() {
+        unlockBtn.style.display = "block";
+      }
+
+      function hidePaywall() {
+        unlockBtn.style.display = "none";
+      }
+
+      // New: Unlock flow -> create checkout session -> redirect
+      unlockBtn.addEventListener("click", async () => {
+        try {
+          unlockBtn.disabled = true;
+          statusEl.textContent = "Opening checkout…";
+
+          const resp = await fetch("/api/create-checkout-session", { method: "POST" });
+          const data = await resp.json().catch(() => ({}));
+
+          if (!resp.ok || !data.url) {
+            statusEl.textContent = "Could not open checkout.";
+            briefEl.textContent = `Error: ${data.error || resp.statusText || "Unknown error"}`;
+            unlockBtn.disabled = false;
+            return;
+          }
+
+          window.location.href = data.url;
+        } catch (err) {
+          statusEl.textContent = "Checkout error.";
+          briefEl.textContent = String(err);
+          unlockBtn.disabled = false;
+        }
+      });
+
       runBtn.addEventListener("click", async () => {
         const ticker = normTicker(tickerEl.value);
         if (!ticker) {
@@ -135,6 +178,7 @@
           return;
         }
 
+        hidePaywall();
         setRedditLink(ticker);
 
         runBtn.disabled = true;
@@ -146,6 +190,16 @@
 
         try {
           const resp = await fetch(`/api/brief?ticker=${encodeURIComponent(ticker)}`);
+
+          // New: if paywall triggered, show Unlock button
+          if (resp.status === 402) {
+            const data = await resp.json().catch(() => ({}));
+            showPaywall();
+            statusEl.textContent = "Free limit reached. Unlock unlimited checks.";
+            briefEl.textContent = data?.message || "You’ve used your 3 free checks today.";
+            return;
+          }
+
           const data = await resp.json();
 
           if (!resp.ok) {
@@ -212,6 +266,15 @@
       tickerEl.addEventListener("keydown", (e) => {
         if (e.key === "Enter") runBtn.click();
       });
+
+      // If user returns from Stripe success, show a friendly message (optional)
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("paid") === "1") {
+        statusEl.textContent = "Payment complete. Thanks! (Unlimited will turn on after we add the webhook step.)";
+      }
+      if (params.get("canceled") === "1") {
+        statusEl.textContent = "Checkout canceled.";
+      }
     </script>
   </body>
 </html>
