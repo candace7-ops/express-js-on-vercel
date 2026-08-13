@@ -597,18 +597,22 @@ app.get("/api/brief", async (req, res) => {
       : `- No major headlines found.`);
 
   // Try Vertex first; if it fails, fall back to API-key Gemini; if that fails, use fallback brief.
-  let gem = await geminiBriefFromVertex({
+ let gem = await geminiBriefFromVertex({
+  ticker,
+  headlines,
+  sentimentLabel: sentiment.label
+});
+
+if (!gem.ok) {
+  const vertexNote = gem.note; // save why Vertex failed
+
+  const fallback = await geminiBriefFromApiKey({
     ticker,
     headlines,
     sentimentLabel: sentiment.label
   });
 
-  if (!gem.ok) {
-    gem = await geminiBriefFromApiKey({
-      ticker,
-      headlines,
-      sentimentLabel: sentiment.label
-    });
+  gem = fallback.ok ? fallback : { ...fallback, note: vertexNote };
   }
 
   const brief30s = gem.ok ? gem.brief : fallbackBrief30s;
