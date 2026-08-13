@@ -19,7 +19,7 @@ const webhookRawBody = express.raw({ type: "application/json" });
 const jsonBody = express.json();
 
 // Change on deploy to verify the running build
-const BUILD_ID = "KV-DIAG-PAIDRAW-2026-08-13-1356";
+const BUILD_ID = "CLEANUP-NO-DEV-ENDPOINT-2026-08-13-1404";
 
 // Stripe (server-side)
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -310,28 +310,6 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
   }
 }
 
-// ---------- TEMP DEV: mark browser paid (reads back KV) ----------
-
-app.post("/api/dev-mark-paid", async (req, res) => {
-  const token = req.headers["x-dev-token"];
-  if (!process.env.DEV_TOKEN || token !== process.env.DEV_TOKEN) {
-    return res.status(401).json({ error: "unauthorized" });
-  }
-
-  try {
-    const browserId = getOrSetBrowserId(req, res);
-    const key = `ss:paid_browser:${browserId}`;
-
-    await kv.set(key, "1");
-    const after = await kv.get(key);
-
-    return res.json({ ok: true, browserId, key, after });
-  } catch (e) {
-    console.error("dev-mark-paid error", e);
-    return res.status(500).json({ ok: false, error: String(e) });
-  }
-});
-
 // ---------- Stripe (create Checkout session) ----------
 
 app.post("/api/create-checkout-session", jsonBody, async (req, res) => {
@@ -376,16 +354,7 @@ app.post("/api/stripe-webhook", webhookRawBody, async (req, res) => {
       process.env.STRIPE_WEBHOOK_SECRET
     );
   } catch (err) {
-    console.error("Webhook signature verification failed:", {
-      message: err?.message || String(err),
-      hasSigHeader: Boolean(req.headers["stripe-signature"]),
-      contentType: req.headers["content-type"],
-      bodyIsBuffer: Buffer.isBuffer(req.body),
-      bodyType: typeof req.body,
-      bodyLen: req.body?.length,
-      secretLooksSet: Boolean(process.env.STRIPE_WEBHOOK_SECRET),
-      secretPrefix: (process.env.STRIPE_WEBHOOK_SECRET || "").slice(0, 8)
-    });
+    console.error("Webhook signature verification failed:", err?.message || err);
     return res.status(400).send("Webhook Error");
   }
 
@@ -416,22 +385,8 @@ app.get("/api/brief", async (req, res) => {
   // Identify browser (cookie)
   const browserId = getOrSetBrowserId(req, res);
 
-  const paidKey = `ss:paid_browser:${browserId}`;
-  const paidRaw = await kv.get(paidKey);
-  const isPaid = String(paidRaw) === "1";
-
-  console.log("brief paid-check", {
-    browserId,
-    paidKey,
-    paidRaw,
-    isPaid,
-    kvUrlPrefix: String(process.env.KV_REST_API_URL || process.env.KV_URL || "").slice(0, 40),
-    buildId: BUILD_ID
-  });
-
-  // Debug headers (TEMPORARY)
-  res.setHeader("X-SS-ID", browserId);
-  res.setHeader("X-SS-PAID", isPaid ? "1" : "0");
+  // If paid, skip free limit
+  const isPaid = String(await kv.get(`ss:paid_browser:${browserId}`)) === "1";
 
   if (!isPaid) {
     // Free limit: 3 per UTC day (KV-backed)
