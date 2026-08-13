@@ -34,6 +34,55 @@ app.get("/healthz", (_req, res) => {
   });
 });
 
+// ---------- simple cookie + free limit (no login) ----------
+
+// NOTE: This is in-memory. On Vercel it can reset sometimes.
+// Good enough to prove the paywall works. Later we can use Vercel KV for persistence.
+const DAILY_COUNTS = new Map();
+
+function parseCookies(req) {
+  const header = req.headers.cookie || "";
+  const out = {};
+  header.split(";").forEach((part) => {
+    const s = part.trim();
+    if (!s) return;
+    const i = s.indexOf("=");
+    if (i === -1) return;
+    const k = s.slice(0, i).trim();
+    const v = s.slice(i + 1).trim();
+    out[k] = decodeURIComponent(v);
+  });
+  return out;
+}
+
+function newId() {
+  return (
+    Date.now().toString(36) +
+    "-" +
+    Math.random().toString(36).slice(2) +
+    Math.random().toString(36).slice(2)
+  );
+}
+
+function todayKeyUTC() {
+  // "YYYY-MM-DD" in UTC
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getOrSetBrowserId(req, res) {
+  const cookies = parseCookies(req);
+  let id = cookies.ss_id;
+  if (!id) {
+    id = newId();
+    // 1 year cookie
+    res.setHeader(
+      "Set-Cookie",
+      `ss_id=${encodeURIComponent(id)}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`
+    );
+  }
+  return id;
+}
+
 // ---------- helpers ----------
 
 function redditSearchUrl(ticker) {
@@ -293,6 +342,24 @@ app.post("/api/create-checkout-session", async (_req, res) => {
 // ---------- API ----------
 
 app.get("/api/brief", async (req, res) => {
+  // Identify browser (cookie)
+  const browserId = getOrSetBrowserId(req, res);
+
+  // Free limit: 3 per UTC day
+  const day = todayKeyUTC();
+  const key = `${day}:${browserId}`;
+  const used = DAILY_COUNTS.get(key) || 0;
+
+  if (used >= 3) {
+    return res.status(402).json({
+      paywall: true,
+      message: "Free limit reached (3/day). Unlock unlimited checks for $5/month."
+    });
+  }
+
+  // Count this request
+  DAILY_COUNTS.set(key, used + 1);
+
   const ticker = String(req.query.ticker || "")
     .trim()
     .toUpperCase();
