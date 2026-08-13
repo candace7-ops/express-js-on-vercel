@@ -4,7 +4,7 @@ import https from "https";
 import { fileURLToPath } from "url";
 import { URL } from "url";
 import Stripe from "stripe";
-
+import { kv } from "@vercel/kv";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
