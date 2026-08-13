@@ -53,7 +53,9 @@
         <div>
           <label for="ticker">Ticker</label>
           <input id="ticker" placeholder="e.g., AAPL" autocomplete="off" />
-          <div class="muted">No login. Free plan allows 3 briefs/day per browser.</div>
+          <div class="muted">
+            No account required. Free plan allows 3 briefs/day per browser. Unlock applies to this browser; clearing cookies or switching devices may require unlocking again.
+          </div>
         </div>
 
         <div style="flex:0 0 200px; min-width: 200px;">
@@ -61,11 +63,6 @@
 
           <button id="unlockBtn" class="btnSecondary" style="display:none; margin-top:10px;">
             Unlock $5/mo
-          </button>
-
-          <!-- TEMP ADMIN BUTTON (remove after you fix your access) -->
-          <button id="fixPaidBtn" class="btnSecondary" style="display:block; margin-top:10px;">
-            Fix my access (admin)
           </button>
 
           <div class="muted" style="margin-top:10px;">
@@ -113,7 +110,6 @@
       const tickerEl = document.getElementById("ticker");
       const runBtn = document.getElementById("runBtn");
       const unlockBtn = document.getElementById("unlockBtn");
-      const fixPaidBtn = document.getElementById("fixPaidBtn");
       const statusEl = document.getElementById("status");
       const briefEl = document.getElementById("brief");
       const whatsNewEl = document.getElementById("whatsNew");
@@ -179,33 +175,6 @@
           statusEl.textContent = "Checkout error.";
           briefEl.textContent = String(err);
           enableUnlock();
-        }
-      });
-
-      // TEMP ADMIN: mark current browser as paid
-      fixPaidBtn.addEventListener("click", async () => {
-        try {
-          const token = prompt("Enter DEV_TOKEN:");
-          if (!token) return;
-
-          statusEl.textContent = "Fixing access…";
-
-          const r = await fetch("/api/dev-mark-paid", {
-            method: "POST",
-            headers: { "x-dev-token": token }
-          });
-
-          const txt = await r.text();
-          alert("Fix access result:\nStatus: " + r.status + "\n\n" + txt);
-
-          if (r.status === 200) {
-            statusEl.textContent = "Access fixed. Try Get brief again.";
-            hidePaywall();
-          } else {
-            statusEl.textContent = "Fix access failed. Check token / deploy.";
-          }
-        } catch (e) {
-          alert("Fix access error: " + String(e));
         }
       });
 
