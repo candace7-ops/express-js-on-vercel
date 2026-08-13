@@ -310,7 +310,7 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
 
 // ---------- Stripe (create Checkout session) ----------
 
-app.post("/api/create-checkout-session", async (req, res) => {
+app.post("/api/create-checkout-session", express.json(), async (req, res) => {
   try {
     const browserId = getOrSetBrowserId(req, res);
 
