@@ -9,26 +9,25 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
-// IMPORTANT: change this any time you deploy, so you can prove you're hitting the right build
+// Change on deploy to verify the running build
 const BUILD_ID = "KEY-ONLY-2026-08-12-0725";
 
-// Serve static files from /public (reliable path)
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 app.use(express.static(PUBLIC_DIR));
 
-// Always serve homepage
 app.get("/", (_req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, "index.html"));
 });
 
-// Health check
 app.get("/healthz", (_req, res) => {
-  res
-    .status(200)
-    .json({ status: "ok", buildId: BUILD_ID, timestamp: new Date().toISOString() });
+  res.status(200).json({
+    status: "ok",
+    buildId: BUILD_ID,
+    timestamp: new Date().toISOString()
+  });
 });
 
-// --- helpers ---
+// ---------- helpers ----------
 
 function redditSearchUrl(ticker) {
   const q = `$${ticker} OR ${ticker}`;
@@ -84,39 +83,21 @@ function simpleSentimentLabel(text) {
   return { label: "Neutral", score };
 }
 
-function fetchText(url) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    https
-      .get(
-        {
-          hostname: u.hostname,
-          path: u.pathname + u.search,
-          headers: { "User-Agent": "StockSpadeDemo/1.0 (hackathon demo)" }
-        },
-        (res) => {
-          let data = "";
-          res.on("data", (chunk) => (data += chunk));
-          res.on("end", () => resolve(data));
-        }
-      )
-      .on("error", reject);
-  });
-}
-
 function redactSecrets(str) {
   const s = String(str || "");
-  // Strip query param "key=...."
   let out = s.replace(/([?&]key=)[^&\s)"]+/gi, "$1[REDACTED]");
-  // Common API key-ish tokens (best-effort)
   out = out.replace(/\bAIza[0-9A-Za-z\-_]{10,}\b/g, "[REDACTED]");
   out = out.replace(/\bsk-[0-9A-Za-z\-_]{10,}\b/g, "[REDACTED]");
   return out;
 }
 
-async function fetchJson(url, { method = "GET", headers = {}, body = null } = {}) {
+function httpsRequestText(
+  url,
+  { method = "GET", headers = {}, body = null, maxRedirects = 3 } = {}
+) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
+
     const req = https.request(
       {
         method,
@@ -124,34 +105,44 @@ async function fetchJson(url, { method = "GET", headers = {}, body = null } = {}
         path: u.pathname + u.search,
         headers: {
           "User-Agent": "StockSpadeDemo/1.0 (hackathon demo)",
+          Accept: "*/*",
           ...headers
         }
       },
       (res) => {
+        const status = res.statusCode || 0;
+
+        if (
+          [301, 302, 303, 307, 308].includes(status) &&
+          res.headers.location &&
+          maxRedirects > 0
+        ) {
+          const nextUrl = new URL(res.headers.location, u).toString();
+          res.resume();
+          return resolve(
+            httpsRequestText(nextUrl, {
+              method: "GET",
+              headers,
+              body: null,
+              maxRedirects: maxRedirects - 1
+            })
+          );
+        }
+
         let data = "";
         res.on("data", (chunk) => (data += chunk));
         res.on("end", () => {
-          const ok = res.statusCode >= 200 && res.statusCode < 300;
+          const ok = status >= 200 && status < 300;
           if (!ok) {
             return reject(
               new Error(
-                `HTTP ${res.statusCode} from ${redactSecrets(url)}: ${redactSecrets(
-                  data.slice(0, 800)
+                `HTTP ${status} from ${u.hostname}${u.pathname}: ${redactSecrets(
+                  data.slice(0, 600)
                 )}`
               )
             );
           }
-          try {
-            resolve(JSON.parse(data));
-          } catch (e) {
-            reject(
-              new Error(
-                `Failed to parse JSON from ${redactSecrets(url)}: ${String(
-                  e
-                )}; body=${redactSecrets(data.slice(0, 300))}`
-              )
-            );
-          }
+          resolve(data);
         });
       }
     );
@@ -160,6 +151,19 @@ async function fetchJson(url, { method = "GET", headers = {}, body = null } = {}
     if (body) req.write(body);
     req.end();
   });
+}
+
+async function fetchJson(url, opts = {}) {
+  const txt = await httpsRequestText(url, opts);
+  try {
+    return JSON.parse(txt);
+  } catch (e) {
+    throw new Error(
+      `Failed to parse JSON from ${redactSecrets(url)}: ${String(
+        e
+      )}; body=${redactSecrets(txt.slice(0, 300))}`
+    );
+  }
 }
 
 function extractRssItems(xml, limit = 8) {
@@ -215,132 +219,99 @@ ${JSON.stringify(top, null, 2)}
 `;
 }
 
-// Gemini direct via API key (never-crash)
 async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return { ok: false, brief: null, note: "GEMINI_API_KEY not set" };
 
+  const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
   const prompt = buildGeminiPrompt({ ticker, headlines, sentimentLabel });
 
-  const modelsToTry = process.env.GEMINI_MODEL
-    ? [process.env.GEMINI_MODEL]
-    : ["gemini-flash-latest"];
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+    key
+  )}`;
 
-  let lastNote = null;
+  try {
+    const payload = JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.3, maxOutputTokens: 300 }
+    });
 
-  for (const model of modelsToTry) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
-      key
-    )}`;
+    const j = await fetchJson(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: payload
+    });
 
-    try {
-      const payload = JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 300
-        }
-      });
+    const brief =
+      (j?.candidates?.[0]?.content?.parts || [])
+        .map((p) => p?.text || "")
+        .join("")
+        .trim();
 
-      const j = await fetchJson(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: payload
-      });
-
-      const brief =
-        (j?.candidates?.[0]?.content?.parts || [])
-          .map((p) => p?.text || "")
-          .join("")
-          .trim();
-
-      if (!brief) {
-        lastNote = `Gemini API returned empty text (${model})`;
-        continue;
-      }
-
-      return { ok: true, brief, note: `Gemini generated (${model})` };
-    } catch (e) {
-      // IMPORTANT: never leak the key or full URL in notes returned to the client
-      lastNote = redactSecrets(`Gemini API error (${model}): ${String(e)}`);
-      continue;
-    }
+    if (!brief) return { ok: false, brief: null, note: "Gemini returned empty response" };
+    return { ok: true, brief, note: `Gemini generated (${model})` };
+  } catch (e) {
+    return { ok: false, brief: null, note: redactSecrets(`Gemini error: ${String(e)}`) };
   }
-
-  return { ok: false, brief: null, note: lastNote || "Gemini API failed" };
 }
 
-// --- main API ---
+// ---------- API ----------
 
 app.get("/api/brief", async (req, res) => {
-  const ticker = String(req.query.ticker || "").trim().toUpperCase();
+  const ticker = String(req.query.ticker || "")
+    .trim()
+    .toUpperCase();
   if (!ticker) return res.status(400).json({ error: "Missing ticker. Use ?ticker=AAPL" });
 
   const now = new Date().toISOString();
+
+  let headlines = [];
+  let sentiment = { label: "Neutral", score: 0 };
 
   try {
     const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(
       `${ticker} stock`
     )}&hl=en-US&gl=US&ceid=US:en`;
 
-    const xml = await fetchText(rssUrl);
-    const headlines = extractRssItems(xml, 8);
+    const xml = await httpsRequestText(rssUrl);
+    headlines = extractRssItems(xml, 8);
 
     const headlineText = headlines.map((h) => h.title).join(" • ");
-    const sentiment = simpleSentimentLabel(headlineText);
-
-    // fallback brief (always works)
-    const topTitles = headlines.slice(0, 4).map((h) => h.title);
-    const fallbackBrief30s =
-      `30-second brief for ${ticker}:\n` +
-      `- Tone: ${sentiment.label} (headline-based)\n` +
-      (topTitles.length
-        ? topTitles.map((t) => `- ${t}`).join("\n")
-        : `- No major headlines found.`);
-
-    const gem = await geminiBriefFromApiKey({
-      ticker,
-      headlines,
-      sentimentLabel: sentiment.label
-    });
-
-    const brief30s = gem.ok ? gem.brief : fallbackBrief30s;
-
-    res.json({
-      buildId: BUILD_ID,
-      ticker,
-      generatedAt: now,
-      brief30s,
-      sentiment,
-      ai: {
-        provider: "gemini",
-        used: gem.ok,
-        note: gem.note
-      },
-      reddit: {
-        status: "link-only",
-        searchUrl: redditSearchUrl(ticker),
-        note: "Reddit often blocks server-to-server requests (403). This demo provides a reliable Reddit search link."
-      },
-      headlines
-    });
-  } catch (err) {
-    res.status(200).json({
-      buildId: BUILD_ID,
-      ticker,
-      generatedAt: now,
-      brief30s: `Placeholder 30-second brief for ${ticker}. (News fetch failed.)`,
-      sentiment: { label: "Neutral", score: 0 },
-      ai: { provider: "gemini", used: false, note: "News fetch failed before Gemini step" },
-      reddit: {
-        status: "link-only",
-        searchUrl: redditSearchUrl(ticker),
-        note: "Reddit provided as a link to avoid flaky server fetches."
-      },
-      headlines: [],
-      note: redactSecrets(`News fetch error: ${String(err)}`)
-    });
+    sentiment = simpleSentimentLabel(headlineText);
+  } catch {
+    // keep fallback behavior
   }
+
+  const topTitles = headlines.slice(0, 4).map((h) => h.title);
+  const fallbackBrief30s =
+    `30-second brief for ${ticker}:\n` +
+    `- Tone: ${sentiment.label} (headline-based)\n` +
+    (topTitles.length
+      ? topTitles.map((t) => `- ${t}`).join("\n")
+      : `- No major headlines found.`);
+
+  const gem = await geminiBriefFromApiKey({
+    ticker,
+    headlines,
+    sentimentLabel: sentiment.label
+  });
+
+  const brief30s = gem.ok ? gem.brief : fallbackBrief30s;
+
+  res.json({
+    buildId: BUILD_ID,
+    ticker,
+    generatedAt: now,
+    brief30s,
+    sentiment,
+    ai: { provider: "gemini", used: gem.ok, note: gem.note },
+    reddit: {
+      status: "link-only",
+      searchUrl: redditSearchUrl(ticker),
+      note: "Reddit often blocks server-to-server requests (403). This demo provides a reliable Reddit search link."
+    },
+    headlines
+  });
 });
 
 export default app;
