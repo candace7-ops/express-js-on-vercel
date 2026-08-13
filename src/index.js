@@ -317,6 +317,37 @@ app.post("/api/create-checkout-session", async (_req, res) => {
   try {
     if (!process.env.STRIPE_SECRET_KEY) {
       return res.status(500).json({ error: "STRIPE_SECRET_KEY not set" });
+      app.post("/api/stripe-webhook", webhookRawBody, async (req, res) => {
+  let event;
+
+  try {
+    const sig = req.headers["stripe-signature"];
+    event = stripe.webhooks.constructEvent(
+      req.body, // raw Buffer
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error("Webhook signature verification failed:", err?.message || err);
+    return res.status(400).send("Webhook Error");
+  }
+
+  try {
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      const customerId = session.customer;
+
+      if (customerId) {
+        await kv.set(`ss:paid_customer:${customerId}`, "1");
+      }
+    }
+
+    return res.json({ received: true });
+  } catch (err) {
+    console.error("Webhook handler error:", err);
+    return res.status(500).send("Webhook handler failed");
+  }
+});
     }
     if (!process.env.STRIPE_PRICE_ID) {
       return res.status(500).json({ error: "STRIPE_PRICE_ID not set" });
