@@ -40,10 +40,6 @@ app.get("/healthz", (_req, res) => {
 
 // ---------- simple cookie + free limit (no login) ----------
 
-// NOTE: This is in-memory. On Vercel it can reset sometimes.
-// We'll move this to KV later, once everything is stable.
-const DAILY_COUNTS = new Map();
-
 function parseCookies(req) {
   const header = req.headers.cookie || "";
   const out = {};
@@ -392,20 +388,25 @@ app.get("/api/brief", async (req, res) => {
   const isPaid = (await kv.get(`ss:paid_browser:${browserId}`)) === "1";
 
   if (!isPaid) {
-    // Free limit: 3 per UTC day (in-memory for now)
+    // Free limit: 3 per UTC day (KV-backed)
     const day = todayKeyUTC();
-    const key = `${day}:${browserId}`;
-    const used = DAILY_COUNTS.get(key) || 0;
+    const counterKey = `ss:freecount:${day}:${browserId}`;
 
-    if (used >= 3) {
+    // Atomic increment in Redis
+    const used = await kv.incr(counterKey);
+
+    // Set TTL only when key is first created
+    if (used === 1) {
+      // Keep around long enough to avoid edge cases; key is day-scoped anyway.
+      await kv.expire(counterKey, 60 * 60 * 24 * 2); // 48h
+    }
+
+    if (used > 3) {
       return res.status(402).json({
         paywall: true,
         message: "Free limit reached (3/day). Unlock unlimited checks for $5/month."
       });
     }
-
-    // Count this request
-    DAILY_COUNTS.set(key, used + 1);
   }
 
   const ticker = String(req.query.ticker || "")
