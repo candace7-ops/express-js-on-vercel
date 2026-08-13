@@ -24,12 +24,16 @@
       .row { display:flex; gap:12px; align-items:flex-end; flex-wrap: wrap; }
       .row > div { flex: 1 1 260px; min-width: 0; }
       a { color:#111; }
+
       .pill { display:inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; border:1px solid #e5e7eb; }
       .bull { background:#ecfdf5; border-color:#a7f3d0; color:#065f46; }
       .bear { background:#fef2f2; border-color:#fecaca; color:#991b1b; }
 
-      /* CHANGED: neutral pill is now yellow/amber */
-      .neutral { background:#fffbeb; border-color:#f59e0b; color:#92400e; }
+      /* RESTORED: neutral pill is gray again (like before) */
+      .neutral { background:#f3f4f6; border-color:#e5e7eb; color:#374151; }
+
+      /* NEW: only use this for Tone: Neutral (yellow) */
+      .toneNeutral { background:#fffbeb; border-color:#f59e0b; color:#92400e; }
 
       .box { border:1px solid #e5e7eb; border-radius: 12px; padding: 12px; margin-top: 12px; background:#fcfcfd; }
       ul { margin: 8px 0 0 18px; }
@@ -85,6 +89,7 @@
       <div class="box">
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <strong>Brief</strong>
+          <!-- keep initial neutral gray -->
           <span id="tonePill" class="pill neutral">Tone: —</span>
           <span id="aiPill" class="pill neutral">Gemini: —</span>
         </div>
@@ -218,11 +223,13 @@
             return;
           }
 
+          // Tone pill: Bullish=green, Bearish=red, Neutral=YELLOW (toneNeutral)
           const tone = data?.sentiment?.label || "Neutral";
           if (tone === "Bullish") setPill(tonePillEl, "bull", "Tone: Bullish");
           else if (tone === "Bearish") setPill(tonePillEl, "bear", "Tone: Bearish");
-          else setPill(tonePillEl, "neutral", "Tone: Neutral");
+          else setPill(tonePillEl, "toneNeutral", "Tone: Neutral");
 
+          // Gemini pill: keep original behavior (neutral stays gray)
           const usedAI = !!data?.ai?.used;
           setPill(aiPillEl, usedAI ? "bull" : "neutral", "Gemini: " + (usedAI ? "ON" : "OFF"));
 
@@ -255,24 +262,3 @@
               newHeadlines.map(h => `<li>${h.title}</li>`).join("") +
               `</ul>`;
           }
-
-          localStorage.setItem(lastKey, String(Date.now()));
-          statusEl.textContent = `Loaded ${ticker}.`;
-        } catch (err) {
-          statusEl.textContent = "Network error.";
-          briefEl.textContent = String(err);
-        } finally {
-          runBtn.disabled = false;
-        }
-      });
-
-      tickerEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") runBtn.click();
-      });
-
-      const params = new URLSearchParams(window.location.search);
-      if (params.get("paid") === "1") statusEl.textContent = "Payment complete. Thanks!";
-      if (params.get("canceled") === "1") statusEl.textContent = "Checkout canceled.";
-    </script>
-  </body>
-</html>
