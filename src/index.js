@@ -390,11 +390,20 @@ const url =
       body: payload
     });
 
-    const brief =
-      (j?.candidates?.[0]?.content?.parts || [])
-        .map((p) => p?.text || "")
-        .join("")
-        .trim();
+    const cand0 = j?.candidates?.[0];
+
+// Try a few common shapes
+let brief =
+  (cand0?.content?.parts || []).map(p => p?.text || "").join("").trim() ||
+  (typeof cand0?.content?.text === "string" ? cand0.content.text.trim() : "") ||
+  (typeof cand0?.text === "string" ? cand0.text.trim() : "") ||
+  (typeof cand0?.output === "string" ? cand0.output.trim() : "");
+
+if (!brief) {
+  return { ok: false, brief: null, note: "Vertex Gemini returned empty/unrecognized response shape" };
+}
+
+return { ok: true, brief, note: `Vertex Gemini generated (${model})` };
 
     if (!brief) return { ok: false, brief: null, note: "Vertex Gemini returned empty response" };
     return { ok: true, brief, note: `Vertex Gemini generated (${model})` };
