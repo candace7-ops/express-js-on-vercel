@@ -369,8 +369,9 @@ async function geminiBriefFromVertex({ ticker, headlines, sentimentLabel }) {
   const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
   const prompt = buildGeminiPrompt({ ticker, headlines, sentimentLabel });
 
-  const url =
-    `https://${location}-aiplatform.googleapis.com/v1/` +
+  const host = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
+const url =
+  `https://${host}/v1/` +
     `projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(location)}/` +
     `publishers/google/models/${encodeURIComponent(model)}:generateContent`;
 
