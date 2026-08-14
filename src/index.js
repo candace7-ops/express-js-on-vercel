@@ -389,7 +389,7 @@ async function geminiBriefFromVertex({ ticker, headlines, sentimentLabel }) {
   try {
     const payload = JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 320 }
+      generationConfig: { temperature: 0.2, maxOutputTokens: 700 }
     });
 
     const j = await fetchJson(url, {
@@ -435,7 +435,7 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
   try {
     const payload = JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 320 }
+      generationConfig: { temperature: 0.2, maxOutputTokens: 700 }
     });
 
     const j = await fetchJson(url, {
