@@ -20,7 +20,7 @@ const webhookRawBody = express.raw({ type: "application/json" });
 const jsonBody = express.json();
 
 // Change on deploy to verify the running build
-const BUILD_ID = "VERTEX-GEMINI-4PART-2026-08-13";
+const BUILD_ID = "VERTEX-GEMINI-STABLE-PROMPT-2026-08-14-0100";
 
 // Stripe (server-side)
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -261,14 +261,21 @@ function buildGeminiPrompt({ ticker, headlines, sentimentLabel }) {
     url: h.url
   }));
 
-  return `You are StockSpade, an investor news assistant.
-Write a 30-second brief for ticker ${ticker} using ONLY the headlines provided.
-Rules:
-- 6-10 short bullet lines max
-- mention overall tone: ${sentimentLabel}
-- do NOT invent facts, numbers, prices, or earnings
-- do NOT mention "as an AI"
-- end with one line: "Not financial advice."
+  return `You are StockSpade.
+
+Write a 30-second brief for ticker ${ticker} using ONLY the headlines below.
+
+FORMAT (must follow exactly):
+- Output ONLY bullet lines.
+- Each line MUST start with "- " (dash + space).
+- 6 to 10 bullet lines total.
+- The FIRST bullet must be: "- Tone: ${sentimentLabel}"
+- The LAST bullet must be: "- Not financial advice."
+- Do NOT include any intro sentence, title, or numbering.
+
+CONTENT RULES:
+- Use only what is stated in the provided headlines.
+- Do NOT invent facts, numbers, prices, or earnings.
 
 HEADLINES (JSON):
 ${JSON.stringify(top, null, 2)}
@@ -353,7 +360,7 @@ async function getGoogleAccessToken() {
 async function geminiBriefFromVertex({ ticker, headlines, sentimentLabel }) {
   const sa = readServiceAccountFromEnv();
   const projectId = process.env.GOOGLE_CLOUD_PROJECT || sa?.project_id || null;
-  const location = process.env.GOOGLE_CLOUD_LOCATION || "us-central1";
+  const location = process.env.GOOGLE_CLOUD_LOCATION || "global";
 
   if (!projectId) {
     return {
@@ -366,19 +373,23 @@ async function geminiBriefFromVertex({ ticker, headlines, sentimentLabel }) {
   const tok = await getGoogleAccessToken();
   if (!tok.ok) return { ok: false, brief: null, note: tok.note };
 
-  const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+  const model = process.env.GEMINI_MODEL || "gemini-3.7-flash";
   const prompt = buildGeminiPrompt({ ticker, headlines, sentimentLabel });
 
-  const host = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
-const url =
-  `https://${host}/v1/` +
+  const host =
+    location === "global"
+      ? "aiplatform.googleapis.com"
+      : `${location}-aiplatform.googleapis.com`;
+
+  const url =
+    `https://${host}/v1/` +
     `projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(location)}/` +
     `publishers/google/models/${encodeURIComponent(model)}:generateContent`;
 
   try {
     const payload = JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: 300 }
+      generationConfig: { temperature: 0.2, maxOutputTokens: 320 }
     });
 
     const j = await fetchJson(url, {
@@ -392,20 +403,16 @@ const url =
 
     const cand0 = j?.candidates?.[0];
 
-// Try a few common shapes
-let brief =
-  (cand0?.content?.parts || []).map(p => p?.text || "").join("").trim() ||
-  (typeof cand0?.content?.text === "string" ? cand0.content.text.trim() : "") ||
-  (typeof cand0?.text === "string" ? cand0.text.trim() : "") ||
-  (typeof cand0?.output === "string" ? cand0.output.trim() : "");
+    const brief =
+      (cand0?.content?.parts || []).map((p) => p?.text || "").join("").trim() ||
+      (typeof cand0?.content?.text === "string" ? cand0.content.text.trim() : "") ||
+      (typeof cand0?.text === "string" ? cand0.text.trim() : "") ||
+      (typeof cand0?.output === "string" ? cand0.output.trim() : "");
 
-if (!brief) {
-  return { ok: false, brief: null, note: "Vertex Gemini returned empty/unrecognized response shape" };
-}
+    if (!brief) {
+      return { ok: false, brief: null, note: "Vertex Gemini returned empty/unrecognized response shape" };
+    }
 
-return { ok: true, brief, note: `Vertex Gemini generated (${model})` };
-
-    if (!brief) return { ok: false, brief: null, note: "Vertex Gemini returned empty response" };
     return { ok: true, brief, note: `Vertex Gemini generated (${model})` };
   } catch (e) {
     return { ok: false, brief: null, note: redactSecrets(`Vertex Gemini error: ${String(e?.message || e)}`) };
@@ -428,7 +435,7 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
   try {
     const payload = JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: 300 }
+      generationConfig: { temperature: 0.2, maxOutputTokens: 320 }
     });
 
     const j = await fetchJson(url, {
@@ -607,22 +614,22 @@ app.get("/api/brief", async (req, res) => {
       : `- No major headlines found.`);
 
   // Try Vertex first; if it fails, fall back to API-key Gemini; if that fails, use fallback brief.
- let gem = await geminiBriefFromVertex({
-  ticker,
-  headlines,
-  sentimentLabel: sentiment.label
-});
-
-if (!gem.ok) {
-  const vertexNote = gem.note; // save why Vertex failed
-
-  const fallback = await geminiBriefFromApiKey({
+  let gem = await geminiBriefFromVertex({
     ticker,
     headlines,
     sentimentLabel: sentiment.label
   });
 
-  gem = fallback.ok ? fallback : { ...fallback, note: vertexNote };
+  if (!gem.ok) {
+    const vertexNote = gem.note; // save why Vertex failed
+
+    const fallback = await geminiBriefFromApiKey({
+      ticker,
+      headlines,
+      sentimentLabel: sentiment.label
+    });
+
+    gem = fallback.ok ? fallback : { ...fallback, note: vertexNote };
   }
 
   const brief30s = gem.ok ? gem.brief : fallbackBrief30s;
