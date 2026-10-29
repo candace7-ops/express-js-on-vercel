@@ -22,8 +22,8 @@ const jsonBody = express.json();
 // Change on deploy to verify the running build
 const BUILD_ID = "VERTEX-GEMINI-STABLE-PROMPT-2026-08-14-0100";
 
-// Stripe (server-side). Set STRIPE_SECRET_KEY in Vercel Environment Variables.
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "");
+// Stripe (server-side)
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 app.use(express.static(PUBLIC_DIR));
@@ -139,34 +139,18 @@ function simpleSentimentLabel(text) {
   return { label: "Neutral", score };
 }
 
-// Remove common secret patterns from logs.
 function redactSecrets(str) {
   const s = String(str || "");
   let out = s.replace(/([?&]key=)[^&\s)"]+/gi, "$1[REDACTED]");
   out = out.replace(/\bAIza[0-9A-Za-z\-_]{10,}\b/g, "[REDACTED]");
   out = out.replace(/\bsk-[0-9A-Za-z\-_]{10,}\b/g, "[REDACTED]");
   out = out.replace(/\bya29\.[0-9A-Za-z\-_]+\b/g, "[REDACTED]");
-  out = out.replace(
-    /-----BEGIN PRIVATE KEY-----[\s\S]*?-----END PRIVATE KEY-----/g,
-    "[REDACTED_PRIVATE_KEY]"
-  );
   return out;
 }
 
-/**
- * HTTPS request helper with:
- * - limited redirects
- * - hard timeout to avoid Vercel 300s function timeouts
- */
 function httpsRequestText(
   url,
-  {
-    method = "GET",
-    headers = {},
-    body = null,
-    maxRedirects = 3,
-    timeoutMs = 25_000
-  } = {}
+  { method = "GET", headers = {}, body = null, maxRedirects = 3 } = {}
 ) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
@@ -177,7 +161,7 @@ function httpsRequestText(
         hostname: u.hostname,
         path: u.pathname + u.search,
         headers: {
-          "User-Agent": "StockSpadeDemo/1.0 (vercel)",
+          "User-Agent": "StockSpadeDemo/1.0 (hackathon demo)",
           Accept: "*/*",
           ...headers
         }
@@ -197,8 +181,7 @@ function httpsRequestText(
               method: "GET",
               headers,
               body: null,
-              maxRedirects: maxRedirects - 1,
-              timeoutMs
+              maxRedirects: maxRedirects - 1
             })
           );
         }
@@ -220,12 +203,6 @@ function httpsRequestText(
         });
       }
     );
-
-    req.setTimeout(timeoutMs, () => {
-      req.destroy(
-        new Error(`Timeout after ${timeoutMs}ms for ${u.hostname}${u.pathname}`)
-      );
-    });
 
     req.on("error", reject);
     if (body) req.write(body);
@@ -276,7 +253,6 @@ function extractRssItems(xml, limit = 8) {
 
   return items;
 }
-
 function buildGeminiPrompt({ ticker, headlines, sentimentLabel }) {
   const top = (headlines || []).slice(0, 8).map((h) => ({
     title: h.title,
@@ -342,19 +318,10 @@ function signJwtRS256({ header, payload, privateKeyPem }) {
 
 async function getGoogleAccessToken() {
   const sa = readServiceAccountFromEnv();
-  if (!sa)
-    return {
-      ok: false,
-      token: null,
-      note: "GOOGLE_APPLICATION_CREDENTIALS_JSON not set"
-    };
+  if (!sa) return { ok: false, token: null, note: "GOOGLE_APPLICATION_CREDENTIALS_JSON not set" };
 
   if (!sa.client_email || !sa.private_key) {
-    return {
-      ok: false,
-      token: null,
-      note: "Service account JSON missing client_email/private_key"
-    };
+    return { ok: false, token: null, note: "Service account JSON missing client_email/private_key" };
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
@@ -380,19 +347,13 @@ async function getGoogleAccessToken() {
     const txt = await httpsRequestText("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-      timeoutMs: 20_000
+      body
     });
     const j = JSON.parse(txt);
-    if (!j.access_token)
-      return { ok: false, token: null, note: "No access_token in token response" };
+    if (!j.access_token) return { ok: false, token: null, note: "No access_token in token response" };
     return { ok: true, token: j.access_token, note: "Got access token" };
   } catch (e) {
-    return {
-      ok: false,
-      token: null,
-      note: redactSecrets(`Token error: ${String(e?.message || e)}`)
-    };
+    return { ok: false, token: null, note: redactSecrets(`Token error: ${String(e?.message || e)}`) };
   }
 }
 
@@ -422,9 +383,8 @@ async function geminiBriefFromVertex({ ticker, headlines, sentimentLabel }) {
 
   const url =
     `https://${host}/v1/` +
-    `projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(
-      location
-    )}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+    `projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(location)}/` +
+    `publishers/google/models/${encodeURIComponent(model)}:generateContent`;
 
   try {
     const payload = JSON.stringify({
@@ -438,35 +398,24 @@ async function geminiBriefFromVertex({ ticker, headlines, sentimentLabel }) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${tok.token}`
       },
-      body: payload,
-      timeoutMs: 25_000
+      body: payload
     });
 
     const cand0 = j?.candidates?.[0];
 
     const brief =
       (cand0?.content?.parts || []).map((p) => p?.text || "").join("").trim() ||
-      (typeof cand0?.content?.text === "string"
-        ? cand0.content.text.trim()
-        : "") ||
+      (typeof cand0?.content?.text === "string" ? cand0.content.text.trim() : "") ||
       (typeof cand0?.text === "string" ? cand0.text.trim() : "") ||
       (typeof cand0?.output === "string" ? cand0.output.trim() : "");
 
     if (!brief) {
-      return {
-        ok: false,
-        brief: null,
-        note: "Vertex Gemini returned empty/unrecognized response shape"
-      };
+      return { ok: false, brief: null, note: "Vertex Gemini returned empty/unrecognized response shape" };
     }
 
     return { ok: true, brief, note: `Vertex Gemini generated (${model})` };
   } catch (e) {
-    return {
-      ok: false,
-      brief: null,
-      note: redactSecrets(`Vertex Gemini error: ${String(e?.message || e)}`)
-    };
+    return { ok: false, brief: null, note: redactSecrets(`Vertex Gemini error: ${String(e?.message || e)}`) };
   }
 }
 
@@ -492,8 +441,7 @@ async function geminiBriefFromApiKey({ ticker, headlines, sentimentLabel }) {
     const j = await fetchJson(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: payload,
-      timeoutMs: 25_000
+      body: payload
     });
 
     const brief =
@@ -517,9 +465,7 @@ app.get("/api/ai-status", async (_req, res) => {
     const hasCreds = !!sa?.client_email && !!sa?.private_key;
     const projectId = process.env.GOOGLE_CLOUD_PROJECT || sa?.project_id || null;
 
-    const tok = hasCreds
-      ? await getGoogleAccessToken()
-      : { ok: false, token: null, note: "No creds" };
+    const tok = hasCreds ? await getGoogleAccessToken() : { ok: false, token: null, note: "No creds" };
 
     res.json({
       buildId: BUILD_ID,
@@ -539,7 +485,6 @@ app.get("/api/ai-status", async (_req, res) => {
     res.status(500).json({ error: redactSecrets(String(e?.message || e)) });
   }
 });
-
 // ---------- Stripe (create Checkout session) ----------
 
 app.post("/api/create-checkout-session", jsonBody, async (req, res) => {
@@ -556,4 +501,157 @@ app.post("/api/create-checkout-session", jsonBody, async (req, res) => {
       return res.status(500).json({ error: "APP_URL not set" });
     }
 
-    const session = await
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      client_reference_id: browserId,
+      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      success_url: `${process.env.APP_URL}/?paid=1`,
+      cancel_url: `${process.env.APP_URL}/?canceled=1`
+    });
+
+    return res.json({ url: session.url });
+  } catch (err) {
+    console.error("create-checkout-session error:", err);
+    return res.status(500).json({ error: "Failed to create checkout session" });
+  }
+});
+
+// ---------- Stripe webhook ----------
+
+app.post("/api/stripe-webhook", webhookRawBody, async (req, res) => {
+  let event;
+
+  try {
+    const sig = req.headers["stripe-signature"];
+    event = stripe.webhooks.constructEvent(
+      req.body, // raw Buffer
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error("Webhook signature verification failed:", err?.message || err);
+    return res.status(400).send("Webhook Error");
+  }
+
+  try {
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      const browserId = session.client_reference_id;
+      const customerId = session.customer;
+
+      if (browserId) {
+        await kv.set(`ss:paid_browser:${browserId}`, "1");
+      }
+      if (customerId) {
+        await kv.set(`ss:paid_customer:${customerId}`, "1");
+      }
+    }
+
+    return res.json({ received: true });
+  } catch (err) {
+    console.error("Webhook handler error:", err);
+    return res.status(500).send("Webhook handler failed");
+  }
+});
+// ---------- API ----------
+
+app.get("/api/brief", async (req, res) => {
+  // Identify browser (cookie)
+  const browserId = getOrSetBrowserId(req, res);
+
+  // If paid, skip free limit
+  const isPaid = String(await kv.get(`ss:paid_browser:${browserId}`)) === "1";
+
+  if (!isPaid) {
+    // Free limit: 3 per UTC day (KV-backed)
+    const day = todayKeyUTC();
+    const counterKey = `ss:freecount:${day}:${browserId}`;
+
+    // Atomic increment in Redis
+    const used = await kv.incr(counterKey);
+
+    // Set TTL only when key is first created
+    if (used === 1) {
+      await kv.expire(counterKey, 60 * 60 * 24 * 2); // 48h
+    }
+
+    if (used > 3) {
+      return res.status(402).json({
+        paywall: true,
+        message: "Free limit reached (3/day). Unlock unlimited checks for $5/month."
+      });
+    }
+  }
+
+  const ticker = String(req.query.ticker || "").trim().toUpperCase();
+  if (!ticker) return res.status(400).json({ error: "Missing ticker. Use ?ticker=AAPL" });
+
+  const now = new Date().toISOString();
+
+  let headlines = [];
+  let sentiment = { label: "Neutral", score: 0 };
+
+  try {
+    const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(
+      `${ticker} stock`
+    )}&hl=en-US&gl=US&ceid=US:en`;
+
+    const xml = await httpsRequestText(rssUrl);
+    headlines = extractRssItems(xml, 8);
+
+    const headlineText = headlines.map((h) => h.title).join(" • ");
+    sentiment = simpleSentimentLabel(headlineText);
+  } catch {
+    // keep fallback behavior
+  }
+
+  const topTitles = headlines.slice(0, 4).map((h) => h.title);
+  const fallbackBrief30s =
+    `30-second brief for ${ticker}:\n` +
+    `- Tone: ${sentiment.label} (headline-based)\n` +
+    (topTitles.length
+      ? topTitles.map((t) => `- ${t}`).join("\n")
+      : `- No major headlines found.`);
+
+  // Try Vertex first; if it fails, fall back to API-key Gemini; if that fails, use fallback brief.
+  let gem = await geminiBriefFromVertex({
+    ticker,
+    headlines,
+    sentimentLabel: sentiment.label
+  });
+
+  if (!gem.ok) {
+    const vertexNote = gem.note; // save why Vertex failed
+
+    const fallback = await geminiBriefFromApiKey({
+      ticker,
+      headlines,
+      sentimentLabel: sentiment.label
+    });
+
+    gem = fallback.ok ? fallback : { ...fallback, note: vertexNote };
+  }
+
+  const brief30s = gem.ok ? gem.brief : fallbackBrief30s;
+
+  res.json({
+    buildId: BUILD_ID,
+    ticker,
+    generatedAt: now,
+    brief30s,
+    sentiment,
+    ai: {
+      provider: gem.ok ? (gem.note?.startsWith("Vertex") ? "vertex-gemini" : "gemini") : "none",
+      used: gem.ok,
+      note: gem.note
+    },
+    reddit: {
+      status: "link-only",
+      searchUrl: redditSearchUrl(ticker),
+      note: "Reddit often blocks server-to-server requests (403). This demo provides a reliable Reddit search link."
+    },
+    headlines
+  });
+});
+
+export default app;
